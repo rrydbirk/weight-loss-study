@@ -1,8 +1,4 @@
-Cellular and Transcriptional Dynamics of the Human Adipose Tissue during different Weight Loss Modalities
-
-####
-
-This repository holds information for reproducing data and figures for the paper *Cellular and Transcriptional Dynamics of the Human Adipose Tissue during different Weight Loss Modalities* by Loft _et al._.
+This repository holds information for reproducing data and figures for the paper **Cellular and Transcriptional Dynamics of the Human Adipose Tissue during different Weight Loss Modalities** by Loft _et al._.
 
 We provide objects necessary to produce all figures presented in the manuscript, except for QC which we provide as reports due to GDPR restrictions.
 
