@@ -1,0 +1,4494 @@
+---
+title: "Manuscript figures"
+author: "Rasmus Rydbirk"
+date: "2024-11-11"
+output: 
+  html_document:
+    toc: True
+    toc_float: True
+---
+
+# Setup
+
+```{r setup, message=FALSE}
+library(conos)
+library(qs)
+library(dplyr)
+library(magrittr)
+library(pagoda2)
+library(scHelper) # github.com/rrydbirk/scHelper
+library(cacoa)
+library(ggplot2)
+library(rstatix)
+library(ggpubr)
+library(ComplexHeatmap)
+library(destiny)
+library(Seurat)
+library(harmony)
+library(slingshot)
+library(circlize)
+library(cowplot)
+library(sccore)
+
+meta <- qread("meta.qs")
+
+tt <- Sys.time()
+```
+
+# Figure 1
+
+## Load data
+
+```{r f1load}
+con.major <- qread("con_major.qs", nthreads = 10)
+anno.major <- qread("anno_major.qs")
+```
+
+## Figure 1G
+
+```{r f1g}
+con.major$plotGraph(groups = anno.major, 
+                    plot.na = FALSE, 
+                    size = 0.1,
+                    alpha = 0.1, 
+                    embedding = "UMAP_refined7",
+                    show.labels = TRUE, 
+                    font.size = 5) + 
+  labs(x = "UMAP1", y = "UMAP2") + 
+  theme(line = element_blank()) + 
+  scale_color_manual(values = RColorBrewer::brewer.pal(9, "Set1"))
+```
+
+## Figure 1H
+
+```{r f1h}
+cm.merged <- con.major$getJointCountMatrix() %>% 
+  .[rownames(.) %in% names(anno.major), ]
+
+c("ADIPOQ", "PLIN1", # Adipocytes
+  "PDGFRA", "DCN", # ASPCs
+  "MECOM", "ADGRL4", # ECs
+  "PKHD1L1", "PROX1", # LECs
+  "MYOCD", "MYH11", # SMCs
+  "STEAP4", "GIPR", # Pericytes
+  "IL7R", "CD3E", # Lymphoid
+  "KIT", "CPA3", # Mast
+  "MRC1", "F13A1") %>% # Myeloid
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  factor(anno.major[rownames(cm.merged)], 
+                         levels = c("Adipocytes", 
+                                    "ASPCs", 
+                                    "ECs", 
+                                    "Lymphatic ECs", 
+                                    "SMCs", 
+                                    "Pericytes", 
+                                    "Lymphoid immune cells", 
+                                    "Mast cells", 
+                                    "Myeloid immune cells")), 
+                  gene.order = ., 
+                  cols = c("white","grey20"))
+```
+
+## Figure 1I
+
+```{r f1i, fig.height=5, fig.width=9}
+# Use Cacoa to calculate proportions
+cao <- Cacoa$new(data.object = con.major, 
+                 cell.groups = anno.major, 
+                 ref.level = "vis2", 
+                 target.level = "vis3", 
+                 sample.groups = con.major$samples %>% 
+                   names() %>% 
+                   strsplit("_") %>% 
+                   sapply('[[', 3) %>% 
+                   gsub(1, 2, .) %>% 
+                   `names<-`(con.major$samples %>% 
+                               names()),
+                 sample.groups.palette = ggsci::pal_jama()(7))
+
+cao$sample.groups <- con.major$samples %>% 
+  names() %>% 
+  strsplit("_") %>% 
+  sapply('[[', 3) %>% 
+  `names<-`(con.major$samples %>% 
+              names()) %>% 
+  gsub("vis", "Visit ", .)
+
+p <- cao$plotCellGroupSizes(show.significance = TRUE, 
+                            filter.empty.cell.types = FALSE)
+```
+
+
+```{r f1i2, fig.height=5, fig.width=9}
+plot.dat <- p$data %>% 
+  mutate(sex = rep(meta$sex, 9)) %>% 
+  mutate(sample = stringi::stri_dup(LETTERS[seq(14)], 3) %>% 
+           paste(collapse = "") %>% 
+           strsplit("") %>% 
+           unlist() %>% 
+           rep(9)) %>% 
+  mutate(sex_visit = paste(sex, group, sep = " ") %>% 
+           gsub("Vis", "vis", .),
+         facet = ifelse(variable %in% c("SMCs", "Mast cells", "Lymphatic ECs", "Pericytes", "Lymphoid immune cells"), "low", "high"),
+         variable = factor(variable, levels = c("Adipocytes", "ASPCs", "ECs", "Myeloid immune cells", "Lymphatic ECs", "SMCs", "Pericytes", "Lymphoid immune cells", "Mast cells")) %>% 
+           renameAnnotation("Myeloid immune cells", "   Myeloid immune cells")) %>% 
+  mutate(sex_visit_anno = paste0(sex_visit, "_", variable))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$variable)) %>%
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$group)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$variable))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T),
+         facet = ifelse(ct %in% c("SMCs", "Mast cells", "Lymphatic ECs", "Pericytes", "Lymphoid immune cells"), "low", "high"))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(var, sex) %>%
+  wilcox_test(value~sex_visit, paired = T) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(is.na(x[10])) "" else if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p), !var %in% c("Adipocytes", "Lymphoid immune cells")) %>% # Remove those not significant for KW
+  add_xy_position(x = "var", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position)) %>% 
+  mutate(facet = ifelse(var %in% c("SMCs","Mast cells","Lymphatic ECs","Pericytes","Lymphoid immune cells"), "low", "high"))
+
+# Plot
+p.high <- plot.dat %>% 
+  filter(facet == "high") %>% 
+  ggplot(aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "% cells per sample") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat %>% filter(facet == "high"), aes(ct, y = 65, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "high"), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+
+x.cor <- 4
+
+p.low <- plot.dat %>% 
+  filter(facet == "low") %>%
+  ggplot(aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = FALSE, data = sex.stat %>% filter(facet == "low"), aes(ct, y = 15, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "low") %>% mutate(x = x-x.cor, xmin = xmin-x.cor, xmax = xmax-x.cor), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 2, hide.ns = FALSE) # Wilcoxon
+
+pp <- plot_grid(plotlist = list(p.high, p.low), rel_widths = c(1,1.5))
+
+pp
+```
+
+# Figure 2
+
+## Load data
+
+```{r f2load}
+con <- qread("con_vascular.qs", nthreads = 10)
+anno.vascular <- qread("anno_vascular.qs")
+```
+
+## Figure 2A
+
+```{r f2a}
+con$plotGraph(groups = anno.vascular, 
+              plot.na = FALSE, 
+              size = 0.2,
+              alpha = 1, 
+              embedding = "UMAP", 
+              shuffle.colors = TRUE, 
+              show.labels = TRUE, 
+              font.size = 5) + 
+  labs(x = "UMAP1", y = "UMAP2") + 
+  theme(line = element_blank()) +
+  scale_colour_manual(values = RColorBrewer::brewer.pal(9, "Purples")[-c(1,2)][c(1,4,7,2,6,3,5)])
+```
+
+## Figure 2B
+
+```{r f2b}
+cm.merged <- con$getJointCountMatrix() %>% 
+  .[rownames(.) %in% names(anno.vascular), ]
+
+c("PCSK5", "NEBL", "FN1", "CADM2", "BTNL9", "CEACAM1", "IL1R1", "VCAN", "ACKR1", "PKHD1L1", "MMRN1", "RELN", "MYH11", "ACTA2", "MYOCD", "COL25A1", "STEAP4", "NCKAP5") %>%  
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.vascular %>% factor(levels = c("arEC", "cEC", "cvEC", "vEC", "lEC", "SMCs", "Pericytes")), 
+                  gene.order = ., 
+                  cols = c("white","purple3"))
+```
+
+## Figure 2D
+
+Here, we're plotting proportions of total cells, so we load the Conos object and the annotation for all cells first.
+
+```{r f2d}
+con.major <- qread("con_major.qs", nthreads = 10)
+anno.major <- qread("anno_major.qs")
+
+# Use Cacoa to calculate proportions
+cao <- Cacoa$new(data.object = con.major, 
+                 cell.groups = anno.major, 
+                 ref.level = "vis2", 
+                 target.level = "vis3",
+                 sample.groups = con.major$samples %>% 
+                   names() %>% 
+                   strsplit("_") %>% 
+                   sapply('[[', 3) %>% 
+                   gsub(1, 2, .) %>% 
+                   `names<-`(con.major$samples %>% 
+                               names()),
+                 sample.groups.palette = ggsci::pal_jama()(7))
+
+cao$sample.groups <- con.major$samples %>% 
+  names() %>% 
+  strsplit("_") %>% 
+  sapply('[[', 3) %>% 
+  `names<-`(con.major$samples %>% 
+              names()) %>% 
+  gsub("vis", "Visit ", .)
+
+anno.comb <- anno.major[!names(anno.major) %in% names(anno.vascular)] %>% 
+  {factor(c(., anno.vascular))}
+
+p <- cao$plotCellGroupSizes(cell.groups = anno.comb,
+                            show.significance = FALSE, 
+                            filter.empty.cell.types = FALSE)
+```
+
+```{r f2d2}
+plot.dat <- p$data %>% 
+  filter(variable %in% levels(anno.vascular)) %>% 
+  mutate(sex = rep(meta$sex, anno.vascular %>% levels() %>% length())) %>% 
+  mutate(sex_visit = paste(sex, group, sep = " ") %>% gsub("Vis", "vis", .),
+         facet = ifelse(variable %in% c("cvEC", "lEC"), "low", "high"),
+         variable = factor(variable, levels = c("arEC", "cEC", "vEC", "SMCs", "Pericytes", "cvEC", "lEC")) %>% 
+           renameAnnotation("lEC", "         lEC"))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$variable)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$group)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$variable))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T),
+         facet = ifelse(ct %in% c("cvEC", "         lEC"), "low", "high"))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(var, sex) %>%
+  wilcox_test(value~sex_visit, paired = T) %>%
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "var", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position)) %>% 
+  mutate(y.position = c(y.position[1]+1, y.position[2], y.position[3]+1, y.position[4], y.position[5]+1, y.position[6:7]),  # Manually adjust overlapping lines
+         facet = ifelse(var %in% c("cvEC", "         lEC"), "low", "high"))
+
+# Plot
+p.high <- ggplot(plot.dat %>% filter(facet == "high"), aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "% cells per sample") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat %>% filter(facet == "high"), aes(ct, y = 22.5, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "high"), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+
+p.low <- ggplot(plot.dat %>% filter(facet == "low"), aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat %>% filter(facet == "low"), aes(ct, y = 4.5, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "low"), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) # Wilcoxon
+
+plot_grid(plotlist = list(p.high, p.low), rel_widths = c(1,0.8))
+```
+
+# Figure 3
+
+## Load data
+
+```{r f3load}
+con <- qread("con_myeloid.qs", nthreads = 10)
+anno.immune <- qread("anno_immune.qs")
+
+anno.myeloid <- anno.immune %>% 
+  .[!. %in% c("NKT","NK","Tem","Th1","Th","Treg","B-cells")] %>% 
+  factor(levels = c("ATM", "mono/mac", "Early LAM", "LAM", "cDC1", "cDC2", "mDC"))
+```
+
+## Figure 3A
+
+```{r f3a}
+con$plotGraph(groups = anno.immune[!anno.immune == "B-cells"], 
+              plot.na = FALSE, 
+              size = 0.2,
+              alpha = 1, 
+              embedding = "largeVis", 
+              show.labels = TRUE, 
+              font.size = 5) + 
+  labs(x = "largeVis1", y = "largeVis2") + 
+  theme(line = element_blank()) +
+  scale_colour_manual(values = c("#174D86", "#9EC3B5", "#356790", "#ADD0BA", "#628EA0", "#80A9AA", "#719CA5"))
+```
+
+## Figure 3B
+
+```{r f3b}
+cm.merged <- con$getJointCountMatrix(raw = FALSE) %>% 
+  .[rownames(.) %in% names(anno.myeloid), ]
+
+c("LYVE1", "SELENOP", # ATM
+  "FCN1","VCAN", # mono/mac
+  "CYP27A1", "APOE", # Early LAM
+  "LPL", "TREM2", # LAM
+  "CLEC9A", "CADM1", # cDC1
+  "CD1C", "CLEC10A", # cDC2
+  "CCR7", "LAMP3") %>% # mDC
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.myeloid, 
+                  gene.order = ., 
+                  cols = c("white","#377EB8"))
+```
+
+## Figure 3C
+
+Here, we're plotting proportions of total cells, so we load the Conos object and the annotation for all cells first.
+```{r f3c}
+con.major <- qread("con_major.qs", nthreads = 10)
+anno.major <- qread("anno_major.qs")
+
+# Use Cacoa to calculate proportions
+cao <- Cacoa$new(data.object = con.major, 
+                 cell.groups = anno.major, 
+                 ref.level = "vis2", 
+                 target.level = "vis3", 
+                 sample.groups = con.major$samples %>% 
+                   names() %>% 
+                   strsplit("_") %>% 
+                   sapply('[[', 3) %>% 
+                   gsub(1, 2, .) %>% 
+                   `names<-`(con.major$samples %>% 
+                               names()),
+                 sample.groups.palette = ggsci::pal_jama()(7))
+
+cao$sample.groups <- con.major$samples %>% 
+  names() %>% 
+  strsplit("_") %>% 
+  sapply('[[', 3) %>% 
+  `names<-`(con.major$samples %>% 
+              names()) %>% 
+  gsub("vis", "Visit ", .)
+
+anno.comb <- anno.major[!names(anno.major) %in% names(anno.myeloid)] %>% 
+  {factor(c(., anno.myeloid))}
+
+p <- cao$plotCellGroupSizes(cell.groups = anno.comb,
+                            show.significance = FALSE, 
+                            filter.empty.cell.types = FALSE)
+```
+
+```{r f3c2}
+plot.dat <- p$data %>% 
+  filter(variable %in% levels(anno.myeloid)) %>% 
+  mutate(sex = rep(meta$sex, anno.myeloid %>% levels() %>% length()),
+         variable = factor(variable)) %>% 
+  mutate(sex_visit = paste(sex, group, sep = " ") %>% gsub("Vis", "vis", .),
+         facet = ifelse(variable != "ATM", "low", "high"),
+         variable = factor(variable, levels = c("ATM", "mono/mac", "Early LAM", "LAM", "cDC1", "cDC2", "mDC")) %>% 
+           renameAnnotation("ATM", "         ATM"))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$variable)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$group)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$variable))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = TRUE),
+         facet = ifelse(ct != "         ATM", "low", "high"))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(var, sex) %>%
+  wilcox_test(value~sex_visit, paired = TRUE) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "var", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position)) %>% 
+  mutate(facet = ifelse(var != "         ATM", "low", "high")) 
+
+# Plot
+p.high <- ggplot(plot.dat %>% filter(facet == "high"), aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "% cells per sample") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat %>% filter(facet == "high"), aes(ct, y = 50, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "high"), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+
+x.cor = 1
+
+p.low <- ggplot(plot.dat %>% filter(facet == "low"), aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = FALSE, data = sex.stat %>% filter(facet == "low"), aes(ct, y = 10, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test %>% filter(facet == "low") %>% mutate(x = x-x.cor, xmin = xmin-x.cor, xmax = xmax-x.cor), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 1, hide.ns = FALSE) # Wilcoxon
+
+plot_grid(plotlist = list(p.high, p.low), rel_widths = c(1,4.5))
+```
+
+## Figure 3E
+
+Preparations
+
+```{r f3e}
+cm.merged <- con$getJointCountMatrix(raw = TRUE) %>% 
+  Matrix::t() %>% 
+  .[, colnames(.) %in% names(anno.myeloid)]
+
+# Calculate DEGs using Cacoa
+con.vis13 <- con$samples %>% 
+  .[!grepl("vis2", names(.))] %>% 
+  Conos$new()
+
+sample.groups <- con.vis13$samples %>% 
+  names() %>% 
+  `names<-`(ifelse(grepl("vis1", .), "visit1", "visit3"), .)
+
+cao <- Cacoa$new(con.vis13, 
+                 sample.groups, 
+                 anno.myeloid, 
+                 ref.level = "visit1", 
+                 target.level = "visit3", 
+                 n.cores = 10)
+
+cao$estimateDEPerCellType(min.cell.frac = 0.1, 
+                          min.cell.count = 5)
+
+de <- cao$test.results$de %>%
+  lapply('[[', "res")
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[colnames(cm.merged)]
+anno.subtype <- anno.myeloid %>% 
+  .[!is.na(.)]
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names()) %>% 
+  .[grepl("ATM|Early LAM|LAM|mono/mac", .)]
+
+# Create pseudo CM
+cm.pseudo <- sccore::collapseCellsByType(cm.merged %>% Matrix::t(), 
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo %<>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T)
+
+genes <- de[c("ATM","Early LAM","LAM","mono/mac")] %>%
+  {`names<-`(lapply(names(.), \(nn) mutate(.[[nn]], ct = nn)), names(.))} %>% 
+  lapply(filter, padj <= 0.05, abs(log2FoldChange) > 1) %>%
+  lapply(pull, Gene) %>% 
+  {sapply(names(.), \(nn) .[[nn]] %>% `names<-`(., rep(nn, length(.))))} %>% 
+  Reduce(c, .) %>% 
+  .[match(unique(.), .)]
+
+idx <- cm.pseudo %>% 
+  colnames() %>% 
+  data.frame(id = .) %>% 
+  mutate(vis = strsplit(id, "_|!!") %>% sget(3),
+         ct = strsplit(id, "!!") %>% sget(2)) %>% 
+  mutate(ord = order(vis, ct))
+
+x <- cm.pseudo %>% 
+  .[match(genes, rownames(.)), match(colnames(na.omit(.)), colnames(.))] %>%
+  .[, idx$ord] %>% 
+  Matrix::t() %>%
+  scale() %>%
+  Matrix::t()
+
+# Ordering
+spc <- con$getDatasetPerCell()
+
+sepc <- meta$sex[match(spc, meta$sample)] %>% 
+  setNames(names(spc))
+
+sex.df <- sepc %>% 
+  {data.frame(nn = names(.), sex = unname(.))} %>% 
+  mutate(nn = strsplit(nn, "!!") %>% sget(1)) %>% 
+  .[match(unique(.$nn), .$nn), ] %>% 
+  filter(!grepl("pool", nn))
+
+ord <- data.frame(Visit = colnames(x) %>%
+                    setNames(colnames(x)) %>% 
+                    strsplit("_|!!|vis") %>%
+                    sget(4)) %>% 
+  mutate(., 
+         donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., 
+         Sex = sex.df$sex[match(.$donor, sex.df$nn)],
+         ct = rownames(.) %>% strsplit("!!") %>% sget(2)) %>% 
+  arrange(ct, Visit, Sex) %>% 
+  rownames()
+
+x <- x[, ord]
+
+groups <- colnames(x) %>%
+  `names<-`(colnames(x))
+
+# Limit scale
+x[x > 2] <- 2
+x[x < -1.5] <- -1.5
+```
+
+Please note, the order of the clusters is not always reproducible.
+
+```{r f3e2}
+# Create top annotation
+tannot <- data.frame(Visit = groups[colnames(x)] %>%
+                       strsplit("_|!!|vis") %>%
+                       sget(4)) %>% 
+  mutate(., donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., Sex = sex.df$sex[match(.$donor, sex.df$nn)]) %>% 
+  select(-donor) %>% 
+  {HeatmapAnnotation(df=.,
+                     border=T,
+                     col=list(Visit = ggsci::pal_jama()(7)[c(1:3)] %>% `names<-`(c(1:3)),
+                              Sex = c("darkred","blue3") %>% setNames(c("Female","Male"))),
+                     show_legend=T)}
+
+# Create color palette
+pal <- colorRampPalette(c('navy','grey95','firebrick'))(1024)
+labeled.gene.subset <- NULL
+
+# Plot
+set.seed(1337)
+
+ha <- ComplexHeatmap::Heatmap(x, 
+                              name='Expression', 
+                              col=pal, 
+                              cluster_columns=FALSE, 
+                              show_row_names=FALSE, 
+                              show_column_names=FALSE, 
+                              top_annotation=tannot,
+                              left_annotation=NULL,
+                              border=TRUE,
+                              show_column_dend = FALSE, 
+                              show_row_dend = FALSE,
+                              row_km = 5,
+                              row_km_repeats = 500,
+                              column_split = groups[colnames(x)] %>% strsplit("!!") %>% sapply('[[', 2) %>% unname() %>% factor(levels = c("ATM", "mono/mac", "Early LAM", "LAM")))
+
+ht = draw(ha); row_order(ht) -> cls
+```
+
+Calculate GO enrichment
+
+```{r f3e3}
+go <- cls %>% 
+  lapply(\(y) clusterProfiler::enrichGO(rownames(x)[y],
+                                        OrgDb = "org.Hs.eg.db", 
+                                        keyType = "SYMBOL", 
+                                        ont = "BP", 
+                                        universe = rownames(cm.merged))) %>% 
+  setNames(names(cls))
+```
+
+## Figures 3F,G
+
+Preparations
+
+```{r f3fg, fig.width=6, fig.height=4}
+cts <- c("Early LAM", "LAM", "mono/mac", "ATM")
+cm.merged <- con$getJointCountMatrix(raw = TRUE)
+
+# Get markers
+markers <- con$getDifferentialGenes(groups = anno.myeloid %>% .[. %in% cts], 
+                                    z.threshold = 1, 
+                                    upregulated.only = TRUE, 
+                                    append.specificity.metrics = TRUE, 
+                                    append.auc = TRUE)
+
+genes <- markers$LAM %>% 
+  filter(AUC > 0.8) %>% 
+  pull(Gene)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.myeloid[anno.myeloid %in% cts] %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                             groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = TRUE) %>% 
+  t()
+```
+
+### Figure 3F
+
+```{r f3f}
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% c("LPL")] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ATM", "mono/mac", "Early LAM", "LAM")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = "LPL", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 500, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) # Wilcoxon
+```
+
+### Figure 3G
+
+```{r f3g}
+plot.dat <- cm.pseudo %>%
+  .[, colnames(.) %in% genes] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ATM", "mono/mac", "Early LAM", "LAM")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " ")) %>% 
+  group_by(visit, sample, anno, donor, sex, sex_visit) %>%
+  summarize(value = mean(value)) %>% 
+  filter(visit != "visit 2") %>% 
+  mutate(visit = factor(visit),
+         donor_anno = paste(strsplit(donor, "_") %>% sapply(\(x) paste(x[1], x[2], sep = "_")), anno, sep = "_")) %>% 
+  arrange(visit, sample) %$% 
+  split(., visit) %>% 
+  {lapply(., filter, donor_anno %in% .[[2]]$donor_anno)} %>% 
+  {data.frame(.[[1]], diff = .[[2]]$value - .[[1]]$value)}
+
+plot.dat %>% 
+  ggplot(aes(anno, diff)) +
+  geom_boxplot(aes(fill = sex)) +
+  geom_hline(yintercept = 0, color = "black") +
+  geom_point(aes(fill = sex), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Mean normalized pseudobulk difference\nin top gene marker expression", title = "LAM top markers") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c("darkred", "blue3")) +
+  stat_compare_means(mapping = aes(fill = sex), method = "wilcox", label = "p.signif")
+```
+
+```{r f3g2}
+plot.dat %>% 
+  mutate(sex_visit_anno = paste(sex_visit, anno, sep = "_")) %$% 
+  split(diff, sex_visit_anno) %>% 
+  lapply(t.test)
+```
+
+# Figure 4
+
+## Load data
+
+```{r f4load}
+con <- qread("con_aspc.qs", nthreads = 10)
+anno.aspc <- qread("anno_aspc.qs")
+```
+
+## Figure 4A
+
+```{r f4a}
+con$plotGraph(groups = anno.aspc, 
+              plot.na = FALSE, 
+              size = 0.2,
+              alpha = 1, 
+              embedding = "largeVis",
+              show.labels = TRUE, 
+              font.size = 5) + 
+  labs(x = "largeVis1", y = "largeVis2") + 
+  theme(line = element_blank()) +
+  scale_colour_manual(values = RColorBrewer::brewer.pal(5, "Greens")[-1][c(2,1,3,4)])
+```
+
+## Figure 4B
+
+```{r f4b}
+cm.merged <- con$getJointCountMatrix()
+
+c("DPP4", "SEMA3C", "FBN1", # DPP4
+  "CXCL14", "CFD", "C3", # CXCL14
+  "PPARG", "ACACB", "SEMA3A", # PPARG
+  "EPHA3", "MEOX2", "IGFBP7" # EPHA3
+) %>% 
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.aspc %>% factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")), 
+                  gene.order = ., 
+                  cols = c("white","green4"))
+```
+
+## Figure 4C
+
+Here, we're plotting proportions of total cells, so we load the Conos object and the annotation for all cells first.
+```{r f4c}
+con.major <- qread("con_major.qs", nthreads = 10)
+anno.major <- qread("anno_major.qs")
+
+# Use Cacoa to calculate proportions
+cao <- Cacoa$new(data.object = con.major, 
+                 cell.groups = anno.major, 
+                 ref.level = "vis2", 
+                 target.level = "vis3", 
+                 sample.groups = con.major$samples %>% 
+                   names() %>% 
+                   strsplit("_") %>% 
+                   sapply('[[', 3) %>% 
+                   gsub(1, 2, .) %>% 
+                   `names<-`(con.major$samples %>% 
+                               names()),
+                 sample.groups.palette = ggsci::pal_jama()(7))
+
+cao$sample.groups <- con.major$samples %>% 
+  names() %>% 
+  strsplit("_") %>% 
+  sapply('[[', 3) %>% 
+  `names<-`(con.major$samples %>% 
+              names()) %>% 
+  gsub("vis", "Visit ", .)
+
+anno.comb <- anno.major[!names(anno.major) %in% names(anno.aspc)] %>% 
+  {factor(c(., anno.aspc))}
+
+p <- cao$plotCellGroupSizes(cell.groups = anno.comb,
+                            show.significance = FALSE, 
+                            filter.empty.cell.types = FALSE)
+```
+
+```{r f4c2}
+plot.dat <- p$data %>% 
+  filter(variable %in% levels(anno.aspc)) %>% 
+  mutate(sex = rep(meta$sex, anno.aspc %>% levels() %>% length()),
+         variable = factor(variable)) %>% 
+  mutate(sex_visit = paste(sex, group, sep = " ") %>% gsub("Vis", "vis", .),
+         variable = factor(variable, levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$variable)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$group)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$variable))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(var, sex) %>%
+  wilcox_test(value~sex_visit, paired = T)
+
+stat.test[1, "p.adj.signif"] <- "."
+stat.test[15, "p.adj.signif"] <- "."
+
+stat.test %<>% 
+  filter(p.adj.signif != "ns", !is.na(p), !var %in% c("ASPC_CXCL14")) %>% # Remove those not significant for KW
+  add_xy_position(x = "var", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "% cells per sample", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 20, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 2, hide.ns = F) # Wilcoxon
+```
+
+## Figure 4D
+
+Preparations
+
+```{r f4d}
+cm.merged <- con$getJointCountMatrix(raw = TRUE) %>% 
+  Matrix::t() %>% 
+  .[, colnames(.) %in% names(anno.aspc)]
+
+# Calculate DEGs using Cacoa
+con.vis13 <- con$samples %>% 
+  .[!grepl("vis2", names(.))] %>% 
+  Conos$new()
+
+sample.groups <- con.vis13$samples %>% 
+  names() %>% 
+  `names<-`(ifelse(grepl("vis1", .), "visit1", "visit3"), .)
+
+cao <- Cacoa$new(con.vis13, 
+                 sample.groups, 
+                 anno.aspc, 
+                 ref.level = "visit1", 
+                 target.level = "visit3", 
+                 n.cores = 10)
+
+cao$estimateDEPerCellType()
+
+de <- cao$test.results$de %>%
+  lapply('[[', "res")
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[colnames(cm.merged)]
+anno.subtype <- anno.aspc %>% 
+  .[!is.na(.)]
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+# Create pseudo CM
+cm.pseudo <- sccore::collapseCellsByType(cm.merged %>% Matrix::t(), 
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo %<>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T)
+
+genes <- de %>%
+  {`names<-`(lapply(names(.), \(nn) mutate(.[[nn]], ct = nn)), names(.))} %>% 
+  lapply(filter, padj <= 0.05, abs(log2FoldChange) > 1) %>%
+  lapply(pull, Gene) %>% 
+  {sapply(names(.), \(nn) .[[nn]] %>% `names<-`(., rep(nn, length(.))))} %>% 
+  Reduce(c, .) %>% 
+  .[match(unique(.), .)]
+
+idx <- cm.pseudo %>% 
+  colnames() %>% 
+  data.frame(id = .) %>% 
+  mutate(vis = strsplit(id, "_|!!") %>% sget(3),
+         ct = strsplit(id, "!!") %>% sget(2)) %>% 
+  mutate(ord = order(vis, ct))
+
+x <- cm.pseudo %>% 
+  .[match(genes, rownames(.)), match(colnames(na.omit(.)), colnames(.))] %>%
+  .[, idx$ord] %>% 
+  Matrix::t() %>%
+  scale() %>%
+  Matrix::t()
+
+# Ordering
+spc <- con$getDatasetPerCell()
+
+sepc <- meta$sex[match(spc, meta$sample)] %>% 
+  setNames(names(spc))
+
+sex.df <- sepc %>% 
+  {data.frame(nn = names(.), sex = unname(.))} %>% 
+  mutate(nn = strsplit(nn, "!!") %>% sget(1)) %>% 
+  .[match(unique(.$nn), .$nn), ] %>% 
+  filter(!grepl("pool", nn))
+
+ord <- data.frame(Visit = colnames(x) %>%
+                    setNames(colnames(x)) %>% 
+                    strsplit("_|!!|vis") %>%
+                    sget(4)) %>% 
+  mutate(., 
+         donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., 
+         Sex = sex.df$sex[match(.$donor, sex.df$nn)],
+         ct = rownames(.) %>% strsplit("!!") %>% sget(2)) %>% 
+  arrange(ct, Visit, Sex) %>% 
+  rownames()
+
+x <- x[, ord]
+
+groups <- colnames(x) %>%
+  `names<-`(colnames(x))
+
+# Limit scale
+x[x > 2] <- 2
+x[x < -1] <- -1
+```
+
+Please note, the order of the clusters is not always reproducible.
+
+```{r f4d2}
+# Create top annotation
+tannot <- data.frame(Visit = groups[colnames(x)] %>%
+                       strsplit("_|!!|vis") %>%
+                       sget(4)) %>% 
+  mutate(., donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., Sex = sex.df$sex[match(.$donor, sex.df$nn)]) %>% 
+  select(-donor) %>% 
+  {HeatmapAnnotation(df=.,
+                     border=TRUE,
+                     col=list(Visit = ggsci::pal_jama()(7)[c(1:3)] %>% `names<-`(c(1:3)),
+                              Sex = c("darkred","blue3") %>% setNames(c("Female","Male"))),
+                     show_legend=TRUE)}
+
+# Create color palette
+pal <- colorRampPalette(c('navy','grey95','firebrick'))(1024)
+labeled.gene.subset <- NULL
+
+# Plot
+set.seed(1337)
+
+ha <- ComplexHeatmap::Heatmap(x, 
+                              name='Expression', 
+                              col=pal, 
+                              cluster_columns=FALSE, 
+                              show_row_names=FALSE, 
+                              show_column_names=FALSE, 
+                              top_annotation=tannot,
+                              left_annotation=NULL,
+                              border=TRUE,
+                              show_column_dend = FALSE, 
+                              show_row_dend = FALSE,
+                              row_km = 3,
+                              row_km_repeats = 100,
+                              column_split = groups[colnames(x)] %>% strsplit("!!") %>% sapply('[[', 2) %>% unname() %>% factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+                              row_dend_reorder = TRUE)
+
+ht = draw(ha); row_order(ht) -> cls
+```
+
+Calculate GO enrichment
+
+```{r f4d3}
+go <- cls %>% 
+  lapply(\(y) clusterProfiler::enrichGO(rownames(x)[y],
+                                        OrgDb = "org.Hs.eg.db", 
+                                        keyType = "SYMBOL", 
+                                        ont = "BP", 
+                                        universe = rownames(cm.merged))) %>% 
+  setNames(names(cls))
+```
+
+## Figure 4E
+
+Please note, cluster number may be different.
+
+```{r f4e}
+genes.go <- clusterProfiler::bitr("GO:0097193", 
+                                  fromType="GOALL", 
+                                  toType="SYMBOL", 
+                                  OrgDb='org.Hs.eg.db')$SYMBOL %>% 
+  unique()
+
+genes.cls <- x %>% 
+  rownames() %>% 
+  .[cls[[1]]] # Change if needed
+
+genes <- intersect(genes.go, genes.cls)
+```
+
+```{r f4e2, fig.width=6, fig.height=4}
+cm.merged <- con$getJointCountMatrix(raw = T)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.aspc %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                             groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T) %>% 
+  t()
+```
+
+```{r f4e3, fig.width=5, fig.height=4}
+plot.dat <- cm.pseudo %>%
+  .[, colnames(.) %in% genes] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " ")) %>% 
+  group_by(visit, sex, anno, sex_visit, sample) %>%
+  summarize(value = mean(value))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Mean normalized pseudobulk expression", title = "Apoptosis ontology gene expression") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 250, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+## Figure 4G
+
+See `Scenic.ipynb` for `mat` object calculation.
+
+```{r f4g, fig.height = 16, fig.width = 16}
+mat <- fastMatMR::fmm_to_mat("aspc_adi_auc_mat.mtx") %>% 
+  `dimnames<-`(list(
+    read.table("aspc_adi_auc_mat.rownames", header = T)[, 1],
+    read.table("aspc_adi_auc_mat.colnames", header = T)[, 1]
+  ))
+
+con.major <- qread("con_major.qs", nthreads = 10)
+spc <- con.major$getDatasetPerCell()
+vpc <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc))
+```
+
+```{r f4g2, fig.height = 4, fig.width = 5}
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.comb <- factor(c(anno.adipocytes, anno.aspc))
+
+plot.dat <- c("JUN(+)", "ZEB1(+)") %>% # ZEB1 is just a random pick to make it easier to manipulate data, omitted later
+  {mat[, colnames(mat) %in% .]} %>% 
+  as.data.frame() %>%
+  mutate(., 
+         visit = unname(vpc)[match(rownames(.), 
+                                   names(vpc) %>% 
+                                     strsplit("!!") %>% 
+                                     sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ],
+         anno = unname(anno.comb)[match(rownames(.),
+                                        names(anno.comb) %>% 
+                                          strsplit("!!") %>% 
+                                          sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ],
+         sample = unname(spc)[match(rownames(.), 
+                                    names(spc) %>% 
+                                      strsplit("!!") %>% 
+                                      sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ]
+  ) %>% 
+  filter(!is.na(anno)) %>% 
+  reshape2::melt(id.vars = c("visit", "anno", "sample")) %>% 
+  mutate(anno_vis = paste0(anno,"_",visit),
+         anno_var = paste0(anno,"_",variable)) %>% 
+  group_by(visit, anno, variable, sample) %>% 
+  summarize(mm = median(value)) %>% 
+  ungroup() %>% 
+  filter(variable == "JUN(+)",
+         !anno == "Adipocytes") %>% 
+  mutate(anno = factor(anno, levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3", "Adipocytes")),
+         visit = factor(visit, levels = c("vis1", "vis2", "vis3"), labels = c("Visit 1", "Visit 2", "Visit 3")),
+         sex = meta$sex[match(.$sample, meta$sample)],
+         variable = factor(variable)) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " ") %>% gsub("Visit", "visit", .),
+         anno = factor(anno, levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")))
+```
+
+```{r f4g3, fig.height=4, fig.width=8}
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$mm, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$anno))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(mm~sex_visit, paired = TRUE) %>%
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(anno, mm)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Mean AUC", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 6, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 2, hide.ns = F) # Wilcoxon
+```
+
+# Figure 5
+
+## Load data
+
+```{r f5load}
+con <- qread("con_adipocytes.qs", nthreads = 10)
+anno.adipocytes <- qread("anno_adipocytes_archetypes.qs")
+
+missing.cells <- setdiff(rownames(con$embedding), 
+                         names(anno.adipocytes)) %>% 
+  {setNames(rep("", length(.)), .)} %>% 
+  factor()
+
+anno.adipocytes.ext <- factor(c(anno.adipocytes, missing.cells))
+```
+
+## Figure 5A
+
+```{r f5a}
+con$plotGraph(groups = anno.adipocytes.ext, 
+              show.labels = TRUE, 
+              embedding = "largeVis") +
+  labs(x = "largeVis1", y = "largeVis2") +
+  theme(line = element_blank()) + 
+  scale_colour_manual(values = c(RColorBrewer::brewer.pal(4, "Reds")[-1], "gray60"))
+```
+
+## Figure 5B
+
+```{r f5b}
+cm.merged <- con$getJointCountMatrix()
+
+c("PLXDC2","CBLB","TCF4",
+  "GPAM","ACSL1","LPL","DGAT2",
+  "PRSS23","THSD7A","AL139317.5") %>% 
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.adipocytes, 
+                  gene.order = ., 
+                  cols = c("white","red3"))
+```
+
+## Figure 5C
+
+Preparations
+
+```{r f5c}
+cm.merged <- con$getJointCountMatrix(raw = TRUE) %>% 
+  Matrix::t() %>% 
+  .[, colnames(.) %in% names(anno.adipocytes)]
+
+# Calculate DEGs using Cacoa
+con.vis13 <- con$samples %>% 
+  .[!grepl("vis2", names(.))] %>% 
+  Conos$new()
+
+sample.groups <- con.vis13$samples %>% 
+  names() %>% 
+  `names<-`(ifelse(grepl("vis1", .), "visit1", "visit3"), .)
+
+cao <- Cacoa$new(con.vis13, 
+                 sample.groups, 
+                 anno.adipocytes, 
+                 ref.level = "visit1", 
+                 target.level = "visit3", 
+                 n.cores = 10)
+
+cao$estimateDEPerCellType()
+
+de <- cao$test.results$de %>%
+  lapply('[[', "res")
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[colnames(cm.merged)]
+anno.subtype <- anno.adipocytes %>% 
+  .[!is.na(.)]
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+# Create pseudo CM
+cm.pseudo <- sccore::collapseCellsByType(cm.merged %>% Matrix::t(), 
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo %<>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T)
+
+genes <- de %>%
+  {`names<-`(lapply(names(.), \(nn) mutate(.[[nn]], ct = nn)), names(.))} %>% 
+  lapply(filter, padj <= 0.05, abs(log2FoldChange) > 1) %>%
+  lapply(pull, Gene) %>% 
+  {sapply(names(.), \(nn) .[[nn]] %>% `names<-`(., rep(nn, length(.))))} %>% 
+  Reduce(c, .) %>% 
+  .[match(unique(.), .)]
+
+idx <- cm.pseudo %>% 
+  colnames() %>% 
+  data.frame(id = .) %>% 
+  mutate(vis = strsplit(id, "_|!!") %>% sget(3),
+         ct = strsplit(id, "!!") %>% sget(2)) %>% 
+  mutate(ord = order(vis, ct))
+
+x <- cm.pseudo %>% 
+  .[match(genes, rownames(.)), match(colnames(na.omit(.)), colnames(.))] %>%
+  .[, idx$ord] %>% 
+  Matrix::t() %>%
+  scale() %>%
+  Matrix::t()
+
+# Ordering
+spc <- con$getDatasetPerCell()
+
+sepc <- meta$sex[match(spc, meta$sample)] %>% 
+  setNames(names(spc))
+
+sex.df <- sepc %>% 
+  {data.frame(nn = names(.), sex = unname(.))} %>% 
+  mutate(nn = strsplit(nn, "!!") %>% sget(1)) %>% 
+  .[match(unique(.$nn), .$nn), ] %>% 
+  filter(!grepl("pool", nn))
+
+ord <- data.frame(Visit = colnames(x) %>%
+                    setNames(colnames(x)) %>% 
+                    strsplit("_|!!|vis") %>%
+                    sget(4)) %>% 
+  mutate(., 
+         donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., 
+         Sex = sex.df$sex[match(.$donor, sex.df$nn)],
+         ct = rownames(.) %>% strsplit("!!") %>% sget(2)) %>% 
+  arrange(ct, Visit, Sex) %>% 
+  rownames()
+
+x <- x[, ord]
+
+groups <- colnames(x) %>%
+  `names<-`(colnames(x))
+
+# Limit scale
+x[x > 2] <- 2
+x[x < -1] <- -1
+```
+
+Please note, the order of the clusters is not always reproducible, and the clusters them selves may also change slightly.
+
+```{r f5c2}
+# Create top annotation
+tannot <- data.frame(Visit = groups[colnames(x)] %>%
+                       strsplit("_|!!|vis") %>%
+                       sget(4)) %>% 
+  mutate(., donor = rownames(.) %>% strsplit("_vis") %>% sget(1)) %>% 
+  mutate(., Sex = sex.df$sex[match(.$donor, sex.df$nn)]) %>% 
+  select(-donor) %>% 
+  {HeatmapAnnotation(df=.,
+                     border=TRUE,
+                     col=list(Visit = ggsci::pal_jama()(7)[c(1:3)] %>% `names<-`(c(1:3)),
+                              Sex = c("darkred","blue3") %>% setNames(c("Female","Male"))),
+                     show_legend=TRUE)}
+
+# Create color palette
+pal <- colorRampPalette(c('navy','grey95','firebrick'))(1024)
+labeled.gene.subset <- NULL
+
+# Plot
+set.seed(1337)
+
+ha <- ComplexHeatmap::Heatmap(x, 
+                              name='Expression', 
+                              col=pal, 
+                              cluster_columns=FALSE, 
+                              show_row_names=FALSE, 
+                              show_column_names=FALSE, 
+                              top_annotation=tannot,
+                              left_annotation=NULL,
+                              border=TRUE,
+                              show_column_dend = FALSE, 
+                              show_row_dend = FALSE,
+                              row_km = 4,
+                              row_km_repeats = 200, # Here, this parameter greatly influences cluster composition
+                              column_split = groups[colnames(x)] %>% strsplit("!!") %>% sapply('[[', 2) %>% unname() %>% factor(levels = c("CLSTN2_archetype", "DGAT2_archetype", "PRSS23_archetype")),
+                              row_dend_reorder = TRUE)
+
+ht = draw(ha); row_order(ht) -> cls
+```
+
+Calculate GO enrichment
+
+```{r f5c3}
+go <- cls %>% 
+  lapply(\(y) clusterProfiler::enrichGO(rownames(x)[y],
+                                        OrgDb = "org.Hs.eg.db", 
+                                        keyType = "SYMBOL", 
+                                        ont = "BP", 
+                                        universe = rownames(cm.merged))) %>% 
+  setNames(names(cls))
+```
+
+## Figure 5D
+
+```{r f5d, fig.width=6, fig.height=4}
+cm.merged <- con$getJointCountMatrix(raw = T)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.adipocytes %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                             groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T) %>% 
+  t()
+```
+
+```{r f5d2, fig.width=6, fig.height=4}
+gene <- "DECR1"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene, fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 200, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F)# Wilcoxon
+```
+
+```{r f5d3, fig.width=6, fig.height=4}
+gene <- "LIPA"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene, fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 30, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F)# Wilcoxon
+```
+
+```{r f5d4, fig.width=6, fig.height=4}
+gene <- "PLIN5"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene, fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 200, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F)# Wilcoxon
+```
+
+# Figure 6
+
+## Figure 6A
+
+Calculate diffusion embeddings. Please note, this takes some time. We saved the embeddings in `adipocytes_aspc_embeddings.qs`.
+
+```{r f6a, eval = F}
+## Load Conos object and annotation
+data = qread("con_adipocytes_faps.qs", nthreads = 10)
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.aspc <- qread("anno_aspc.qs")
+anno <- factor(c(anno.adipocytes, anno.aspc))
+
+## Convert raw counts to Seurat
+for (name in names(data$samples)) {
+  seu <- CreateSeuratObject(CreateAssayObject(counts = t(data$samples[[name]]$misc$rawCounts)))
+  seu$orig.ident <- substr(name, 0, regexpr("vis", name)-2)
+  seu$visit <- substr(name, regexpr("vis", name), nchar(name))
+  if (name == names(data$samples)[1]) {
+    final <- seu
+  } else {
+    final <- merge(final, seu)
+  }
+}
+
+## Merge annotation
+final <- subset(final, cells = names(anno))
+final <- NormalizeData(final)
+anno.final <- anno[ match(colnames(final), names(anno))]
+final$fine <- anno.final
+final$coarse <- substr(anno.final, 0, regexpr("_", anno.final)-1)
+final$dataset <- paste(final$orig.ident, final$visit, sep="_")
+final <- subset(final, cells = names(which(!is.na(final$fine))))
+full <- final
+
+embeddings <- list()
+for (nfeats in c(25,50,100,250)) { 
+  # Recreate original object
+  final <- full
+  # ASPC
+  ASPC <- subset(final, coarse == "ASPC")
+  VariableFeatures(ASPC) <- NULL
+  obj.list <- SplitObject(ASPC, split.by = "dataset")
+  feats_ASPC <- suppressWarnings(SelectIntegrationFeatures(obj.list, nfeatures = nfeats, verbose = FALSE))
+  # Adipocytes
+  Ad <- subset(final, coarse == "Adipocytes")
+  VariableFeatures(Ad) <- NULL
+  obj.list <- SplitObject(Ad, split.by = "dataset")
+  feats_Ad <- suppressWarnings(SelectIntegrationFeatures(obj.list, nfeatures = nfeats, verbose = FALSE))
+  # Combine
+  feats <- unique(c(feats_ASPC, feats_Ad))
+  ## Embed
+  # PCA
+  VariableFeatures(final) <- feats
+  final <- ScaleData(final)
+  final <- RunPCA(final)
+  for (useHarmony in c(TRUE, FALSE)) {
+    if (useHarmony) {
+      final <- suppressWarnings(RunHarmony(final, group.by.vars = "dataset", verbose  = FALSE))
+      pcs <- final@reductions$harmony@cell.embeddings
+    } else {
+      pcs <- final@reductions$pca@cell.embeddings
+    }
+    for (dims in c(5, 10, 15, 20)) {
+      dm <- destiny::DiffusionMap(pcs[,1:dims], verbose = FALSE, n_pcs = NA)
+      dm_ev <- dm@eigenvectors
+      colnames(dm_ev) <- paste("DC", c(1:20), sep="_")
+      embeddings[[(length(embeddings) + 1)]] <- dm_ev
+      names(embeddings)[length(embeddings)] <- paste(nfeats, useHarmony, dims, sep="_")
+    }
+  }
+}
+```
+
+Prepare data. We chose to continue with embedding no. 2. The `sds_obj` object is saved for Figure 6E.
+
+```{r f6a2}
+# Load and prepare data
+embeddings <- qread("adipocytes_aspc_embeddings.qs")
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.aspc <- qread("anno_aspc.qs")
+anno <- factor(c(anno.adipocytes, anno.aspc))
+
+# Calculate slingshot trajectory
+anno.sort <- anno[rownames(embeddings[[2]])] %>%
+  as.character() %>%
+  unname()
+
+sds_obj <- slingshot(embeddings[[2]][, 1:2] %>% 
+                       `colnames<-`(c("UMAP1","UMAP2")), 
+                     anno.sort, 
+                     end.clus = "Adipocytes", 
+                     start.clus = "ASPC_DPP4")
+
+qsave(sds_obj, "sds_obj.qs")
+
+
+sds <- as.SlingshotDataSet(sds_obj)
+```
+
+Final plot
+
+```{r f6a3}
+plot.df <- embeddings[[2]][,1:2] %>% 
+  as.data.frame() %>% 
+  `colnames<-`(c("UMAP1","UMAP2")) %>% 
+  mutate(., annotation = anno[rownames(.)] %>% as.factor()) %>% 
+  .[complete.cases(.),]
+
+line.df <- lapply(1:length(sds@curves), \(lineage) {
+  sds@curves[[lineage]]$s[,1:2] %>% 
+    data.frame() %>% 
+    mutate(lineage = lineage %>% as.factor())
+}) %>% 
+  setNames(sds@curves %>% names()) %>% 
+  bind_rows() %>% 
+  mutate(lineage = factor(lineage, labels = c("Lineage 1", "Lineage 2")))
+
+ggplot(plot.df, aes(UMAP1, UMAP2, col = annotation)) + 
+  geom_point(size = 0.3) +
+  geom_path(data = line.df, aes(UMAP1, UMAP2, group = lineage, col = lineage), inherit.aes = F, linewidth = 1) + 
+  theme_bw() + 
+  theme(legend.position = "right",
+        line = element_blank()) + 
+  labs(col = "", x = "DC1", y = "DC2") +
+  scale_colour_manual(values = c("#E41A1C", RColorBrewer::brewer.pal(5, "Greens")[-1][c(2,1,3,4)], "black", "grey40")) +
+  dotSize(3) +
+  ylim(c(-0.03, 0.013)) +
+  xlim(c(-0.006, 0.0052))
+```
+
+## Figure 6B
+
+We need the `sds_obj` object from Figure 6A.
+
+```{r f6b, fig.width=5, fig.height=2}
+sds_obj <- qread("sds_obj.qs")
+
+pseudotime_all <- sds_obj@assays@data@listData$pseudotime %>% 
+  as.data.frame() %>% 
+  filter(!is.na(Lineage1)) %>% 
+  {setNames(pull(., Lineage1), rownames(.))}
+
+plot.df %>% 
+  .[names(pseudotime_all), ] %>%
+  mutate(pseudotime = pseudotime_all) %>%
+  ggplot(aes(UMAP1, UMAP2, col = pseudotime)) +
+  geom_point(size = 0.3) +
+  geom_path(data = line.df %>% filter(lineage == "Lineage 1"), aes(UMAP1, UMAP2), inherit.aes = F, color = "black", linewidth = 1, alpha = 0.4) +
+  theme_bw() +
+  theme(line = element_blank()) +
+  labs(col = "Pseudotime", x = "DC1", y = "DC2") +
+  scale_color_continuous(low = "blue3", high = "orange") +
+  ylim(c(-0.005, 0.013)) +
+  xlim(c(-0.006, 0.0052))
+```
+
+## Figure 6C
+
+We need the `sds_obj` object from Figure 6A.
+
+```{r f6c, fig.width=6, fig.height=2}
+sds_obj <- qread("sds_obj.qs")
+
+pseudotime_all <- sds_obj@assays@data@listData$pseudotime %>% 
+  as.data.frame() %>% 
+  filter(!is.na(Lineage1)) %>% 
+  {setNames(pull(., Lineage1), rownames(.))}
+
+plot.df %>% 
+  .[names(pseudotime_all), ] %>%
+  mutate(pseudo = pseudotime_all) %>%
+  mutate(bin = cut(pseudo, breaks = c(0, 0.005, 0.01, 0.0165, 0.023))) %>% 
+  na.omit() %>% 
+  mutate(bin = as.character(bin) %>% 
+           strsplit(",") %>% 
+           sget(2) %>% 
+           gsub("]", "", ., fixed = TRUE)) %>%
+  arrange(bin) %>% 
+  mutate(bin = factor(bin, labels = c("Early preadipocytes", "Mid preadipocytes", "Late preadipocytes", "Adipocyte"))) %>% 
+  ggplot(aes(UMAP1, UMAP2, col = bin)) +
+  geom_point(size = 0.3) +
+  geom_path(data = line.df %>% filter(lineage == "Lineage 1"), aes(UMAP1, UMAP2), inherit.aes = FALSE, color = "black", linewidth = 1, alpha = 0.4) +
+  theme_bw() +
+  theme(line = element_blank()) +
+  labs(col = "Binned pseudotime", x = "DC1", y = "DC2") +
+  scale_color_manual(values = colorRampPalette(c("pink","darkred"))(4)) +
+  ylim(c(-0.005, 0.013)) +
+  xlim(c(-0.006, 0.0052)) +
+  dotSize(3)
+```
+
+## Figure 6D
+
+See `Scenic.ipynb` for `mat` object calculation.
+
+```{r f6d, fig.height = 16, fig.width = 16}
+mat <- fastMatMR::fmm_to_mat("aspc_adi_auc_mat.mtx") %>%
+  `dimnames<-`(list(
+    read.table("aspc_adi_auc_mat.rownames", header = T)[, 1],
+    read.table("aspc_adi_auc_mat.colnames", header = T)[, 1]
+  ))
+
+con.major <- qread("con_major.qs", nthreads = 10)
+spc <- con.major$getDatasetPerCell()
+vpc <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc))
+
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.aspc <- qread("anno_aspc.qs")
+anno <- factor(c(anno.adipocytes, anno.aspc))
+```
+
+We need the `sds_obj` object from Figure 6A.
+
+```{r f6d2, fig.height = 4, fig.width = 5}
+sds_obj <- qread("sds_obj.qs")
+
+mat.df <- c("ZEB1", "EBF3", "PPARG") %>%
+  paste0("(+)") %>%
+  {mat[, colnames(mat) %in% .]} %>% 
+  as.data.frame() %>% 
+  mutate(., 
+         visit = unname(vpc)[match(rownames(.), 
+                                   names(vpc) %>% 
+                                     strsplit("!!") %>% 
+                                     sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ] %>% 
+           factor(labels = c("Visit 1", "Visit 2", "Visit 3")),
+         anno = unname(anno)[match(rownames(.),
+                                   names(anno) %>% 
+                                     strsplit("!!") %>% 
+                                     sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ],
+         sample = unname(spc)[match(rownames(.), 
+                                    names(spc) %>% 
+                                      strsplit("!!") %>% 
+                                      sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ]
+  ) %>% 
+  filter(!is.na(anno))
+
+pseudotime_all <- sds_obj@assays@data@listData$pseudotime %>% 
+  as.data.frame() %>% 
+  filter(!is.na(Lineage1)) %>% 
+  mutate(., 
+         cid = rownames(.) %>% 
+           strsplit("!!") %>% 
+           sapply(\(x) paste0(x[2],"!!",x[3])))
+
+mat.df %<>% .[match(pseudotime_all$cid, rownames(.), nomatch = F), ]
+
+pseudotime_all %<>% .[match(rownames(mat.df), .$cid, nomatch = F), ]
+
+mat.df2 <- mat.df %>% 
+  mutate(pseudotime = pseudotime_all$Lineage1) %>%
+  mutate(bin = cut(pseudotime, breaks = c(0, 0.005, 0.01, 0.0165, 0.023))) %>% 
+  na.omit() %>% 
+  mutate(bin = as.character(bin) %>% 
+           strsplit(",") %>% 
+           sget(2) %>% 
+           gsub("]", "", ., fixed = T)) %>%
+  select(-anno, -pseudotime) %>% 
+  reshape2::melt(id.vars = c("visit", "bin", "sample"), variable.name = "regulon") %>%
+  group_by(visit, regulon, bin, sample) %>%
+  mutate(value = as.numeric(value)) %>% 
+  summarize(mm = median(value))
+```
+
+```{r f6d3, fig.width=18, fig.height=4}
+mat.df2 %>% 
+  pull(regulon) %>% 
+  unique() %>% 
+  as.character() %>% 
+  lapply(\(vv) {
+    plot.dat <- mat.df2 %>% 
+      filter(regulon == vv) %>%
+      ungroup() %>%
+      mutate(sex = meta$sex[match(.$sample, meta$sample)]) %>% 
+      mutate(sex_visit = paste(sex, visit, sep = " ") %>% gsub("Visit", "visit", .))
+    
+    # Kruskal-Wallis
+    sex.stat <- plot.dat %$% 
+      split(., sex) %>% 
+      lapply(\(x) split(x, x$bin)) %>% 
+      lapply(lapply, \(x) kruskal.test(x$mm, g = x$visit)$p.value) %>% 
+      lapply(sapply, gtools::stars.pval) %>% 
+      {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+      `names<-`(c("Female","Male")) %>% 
+      lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+      {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+      bind_rows() %>% 
+      mutate(ct = factor(ct, levels = unique(plot.dat$bin))) %>% 
+      arrange(ct) %>% 
+      mutate(sig = gsub(".", "", sig, fixed = T))
+    
+    # Wilcoxon
+    stat.test <- plot.dat %>%
+      group_by(bin, sex) %>%
+      wilcox_test(mm~sex_visit, paired = F)
+    
+    stat.test %<>% 
+      filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+      add_xy_position(x = "bin", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+      arrange(desc(y.position))
+    
+    # Plot
+    pp <- ggplot(plot.dat, aes(bin, mm)) + 
+      geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+      geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+                 color = "black", size = 0.5, alpha = 0.2) +
+      theme_bw() +
+      labs(x = "", y = "Mean AUC", fill = "", title = vv) +
+      theme(line = element_blank(),
+            axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+            axis.text = element_text(color = "black")) +
+      scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+      geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 2.2, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 0.2, hide.ns = F) # Wilcoxon
+    
+    pp
+  }) %>% 
+  cowplot::plot_grid(plotlist = ., ncol = 3)
+```
+
+## Figure 6E
+
+### Prepare data
+
+We downsampled to 15k nuclei due to calculation times. We provide `sds_obj_reduced.qs` for slingshot pseudotime estimations for the downsampled dataset.
+
+Here, we calculate for visit 1 and visit 3.
+
+```{r f6e, eval = F}
+sds_obj <- qread("sds_obj_reduced.qs")
+
+pseudotime <- sds_obj@assays@data@listData$pseudotime[, 1] %>% 
+  .[!is.na(.)]
+
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+
+mat <- con$getJointCountMatrix() %>%
+  .[match(names(pseudotime), rownames(.)), colSums(.) > 2e2]
+
+mt <- mat %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column() %>%
+  {message("Mutating"); mutate(.,
+                               pseudotime = pseudotime[rowname],
+                               visit = con$getDatasetPerCell()[rowname] %>%
+                                 as.character() %>%
+                                 strsplit("_") %>%
+                                 sget(3),
+                               donor = strsplit(rowname, "!!") %>%
+                                 sget(1))} %>%
+  .[complete.cases(.), ] %>%
+  {message("Melting"); reshape2::melt(., id.vars = c("rowname", "pseudotime", "visit", "donor"))} %$%
+  {message("Splitting"); split(., variable)}
+```
+
+The calculations take app. 11 h with 14k genes and 10k cells. We've added pre-calculated results as `pseudotime_res_novis2.qs`.
+
+```{r f6e2, eval = F}
+res <- mt %>% 
+  sccore::plapply(\(y) {
+    x = y %>% 
+      filter(!visit == "vis2")
+    
+    fit_full <- gamm4(data = x, formula = value ~ s(pseudotime, by = factor(visit)), random = ~(1 | donor), REML = F)
+    fit_reduced <- gamm4(data = x, formula = value ~ s(pseudotime), random = ~(1 | donor), REML = F)
+    fit_none <- gamm4(data = x, formula = value ~ 1, random = ~(1 | donor), REML = F)
+    
+    ann <- anova(fit_full$mer, fit_reduced$mer, fit_none$mer)
+    
+    if (any(ann$`Pr(>Chisq)` <= 0.05, na.rm = T)) {
+      residuals <- predict(fit_full$gam, se.fit = T)$fit %>% 
+        unname()
+      
+      r.sq <- c(summary(fit_full$gam)$r.sq, summary(fit_reduced$gam)$r.sq) %>% 
+        setNames(c("full", "reduced"))
+      
+      out <- list(annova = ann,
+                  residuals = residuals,
+                  r.sq = r.sq)
+      
+      return(out)
+    }
+  }, n.cores = 5, mc.preschedule = T, mc.cleanup = T, progress = F) # 10 cores fails, 5 is max tested that finishes
+```
+
+### Plot
+
+Load data. We need the `sds_obj` from Figure 6A. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
+
+```{r f6e3}
+res <- qread("pseudotime_res_novis2.qs", nthreads = 10) %>% 
+  .[!sapply(., is.null)]
+
+sds_obj <- qread("sds_obj.qs")
+
+pseudotime <- qread("pseudotime_novis2.qs")
+
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+```
+
+```{r f6e4}
+both <- res %>%
+  sapply(\(gene) {
+    ann <- gene$annova
+    (ann[2, "Pr(>Chisq)"] <= 0.05 & ann[3, "Pr(>Chisq)"] <= 0.05)
+  })
+
+res.both <- res[both]
+
+p.both <- res.both %>% 
+  sapply(\(gene) gene$annova[3, "Pr(>Chisq)"])
+
+tmp <- res.both %>% 
+  lget("annova") %>% 
+  lapply(dplyr::slice, 2:3) %>% 
+  lapply(pull, AIC) %>%
+  .[sapply(., \(x) abs(x[2]) > abs(x[1]))] %>% 
+  bind_rows() %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  setNames(c("reduced", "full")) %>% 
+  mutate(diff = abs(full) - abs(reduced)) %>% 
+  mutate(diff.frac = diff / abs(reduced))
+
+res.filter <- res[
+  tmp %>% 
+    filter(diff.frac >= 0.05) %>% 
+    rownames()
+]
+
+cm.merged <- con$getJointCountMatrix() %>% 
+  .[match(names(pseudotime), rownames(.)), colnames(.) %in% names(res.filter)]
+
+visit = con$getDatasetPerCell()[rownames(cm.merged)] %>%
+  as.character() %>%
+  strsplit("_") %>%
+  sget(3)
+```
+
+```{r f6e5}
+# Vis3
+cm.merged.vis <- cm.merged[visit == "vis3", ]
+pseudotime.vis <- pseudotime[rownames(cm.merged.vis)]
+weights.vis <- sds_obj@assays@data@listData$weights %>% .[match(names(pseudotime.vis), rownames(.)), 1] + 1E-7
+
+scFit <- cm.merged.vis %>% 
+  Matrix::t() %>% 
+  tradeSeq::fitGAM(pseudotime = pseudotime.vis, cellWeights = weights.vis, verbose = TRUE)
+
+Smooth3 <- tradeSeq::predictSmooth(scFit, gene = colnames(cm.merged.vis), tidy = FALSE, n=100)
+
+# Vis1
+cm.merged.vis <- cm.merged[visit == "vis1", ]
+pseudotime.vis <- pseudotime[rownames(cm.merged.vis)]
+weights.vis <- sds_obj@assays@data@listData$weights %>% .[match(names(pseudotime.vis), rownames(.)), 1] + 1E-7
+
+scFit <- cm.merged.vis %>% 
+  Matrix::t() %>% 
+  tradeSeq::fitGAM(pseudotime = pseudotime.vis, cellWeights = weights.vis, verbose = TRUE)
+
+Smooth1 <- tradeSeq::predictSmooth(scFit, gene = colnames(cm.merged.vis), tidy = FALSE, n=100)
+
+# Combine smooth
+Smooth <- cbind(Smooth3, Smooth1)
+
+# Average across replicates and scale
+Smooth <- t(scale(t(Smooth)))
+
+# Split smooth
+Smooth33 <- Smooth[, 1:100]
+Smooth11 <- Smooth[, 101:200]
+
+# Vis3
+# Seriate the results
+
+Smooth33 <- Smooth33[ seriation::get_order(seriation::seriate(Smooth33, method="PCA_angle")), ]
+
+col_fun = circlize::colorRamp2(c(-4, 0, 4), c("navy", "white", "firebrick"))
+
+p3 <- Heatmap(Smooth33, 
+              col = col_fun,
+              cluster_columns=F, 
+              cluster_rows=F, 
+              show_column_names = F, 
+              row_names_gp = grid::gpar(fontsize = 5)
+)
+
+# Vis1
+Smooth11 %<>% .[p3@matrix %>% rownames(), ]
+
+p1 <- Heatmap(Smooth11, 
+              col = col_fun,
+              cluster_columns=F, 
+              cluster_rows=F, 
+              show_column_names = F, 
+              row_names_gp = grid::gpar(fontsize = 5)
+)
+
+p3
+p1
+```
+
+# Figure 7
+
+## Figure 7D
+
+For calculation of data, see `Liana.ipynb`.
+
+```{r f7d}
+dat.raw <- read.delim("/work/02_data/00_other/liana_res.csv",
+                      sep = ",",
+                      header = T) %>%
+  mutate(visit = strsplit(sample, "_") %>%
+           sget(3))
+```
+
+Function
+
+```{r f7d2}
+lianaCircos <- function(df,
+                        top.interactions = 30, 
+                        text.size = 1, 
+                        pal = RColorBrewer::brewer.pal(9, "Set1"), 
+                        cell.types = c("Adipocytes", 
+                                       "Myeloid immune cells", 
+                                       "ASPCs", 
+                                       "EC", 
+                                       "SMCs", 
+                                       "Lymphoid immune cells", 
+                                       "Mast cells", 
+                                       "Lymphatic ECs", 
+                                       "Pericytes"),
+                        big.gap = 5,
+                        small.gap = 2,
+                        arrow.width = 3,
+                        link.ramp.rel = T,
+                        link.sort = F,
+                        scale = F,
+                        arrow.head.width = 0.3,
+                        arrow.head.length = 0.3,
+                        link.ramp.col = c("navy", "grey", "firebrick")) {
+  input_df <- df %>% 
+    slice_max(order_by = score, n = top.interactions) %>% 
+    mutate(source = paste0(source, " ")) %>% 
+    mutate(source_lig = paste0(source, "|", ligand), 
+           target_rec = paste0(target, "|", receptor))
+  
+  if (link.ramp.rel) {
+    arr_wd <- rep(arrow.width, nrow(input_df))
+  } else {
+    arr_wd <- (((input_df$score - min(input_df$score))/(max(input_df$score) - min(input_df$score))) * (arrow.width)) + 1
+  }
+  
+  # Colors and segments
+  anno.col <- setNames(pal, 
+                       cell.types) %>% 
+    c(., "ASPCs " = unname(.["ASPCs"]))
+  
+  cell_cols <- anno.col[unique(c(unique(input_df$source), unique(input_df$target), "ASPCs "))]
+  
+  link_cols <- c()
+  
+  if (!link.ramp.rel) {
+    for (i in input_df$source_lig) {
+      link_cols <- c(link_cols, cell_cols[stringr::str_extract(i, 
+                                                               "[^|]+")])
+    }
+  } else {
+    input_df %<>% 
+      arrange(score)
+    
+    df.down <- input_df %>% filter(score <= 0)
+    link_down <- colorRampPalette(c(link.ramp.col[1], link.ramp.col[2]))(nrow(df.down))
+    
+    df.up <- input_df %>% filter(score > 0)
+    link_up <- colorRampPalette(c(link.ramp.col[2], link.ramp.col[3]))(nrow(df.up))
+    
+    link_cols <- c(link_down, link_up)
+  }
+  
+  segments <- unique(c(paste0(input_df$source, "|", input_df$ligand), 
+                       paste0(input_df$target, "|", input_df$receptor)))
+  
+  grp <- stringr::str_extract(segments, "[^|]+") %>% 
+    setNames(segments)
+  
+  # Redo colors
+  cell_cols2 <- grp
+  for (i in unique(grp)) {
+    cell_cols2[cell_cols2 == i] <- cell_cols[i]
+  }
+  
+  # Plot
+  input_df %>% 
+    select(source_lig, target_rec, score) %>%
+    chordDiagram(directional = 1, 
+                 group = grp,
+                 scale = scale, 
+                 diffHeight = 0.005, 
+                 direction.type = c("arrows"),
+                 link.arr.type = "triangle", 
+                 annotationTrack = c(), 
+                 preAllocateTracks = list(
+                   list(track.height = 0.05),
+                   list(track.height = 0.175),
+                   list(track.height = 0.05)), 
+                 big.gap = big.gap,
+                 transparency = 1,
+                 link.arr.lwd = arr_wd,
+                 link.arr.col = link_cols,
+                 link.arr.length = arrow.head.length,
+                 link.arr.width = arrow.head.width,
+                 small.gap = small.gap
+    )
+  
+  circos.track(track.index = 2, panel.fun = function(x, y) {
+    circos.text(CELL_META$xcenter, 
+                CELL_META$ylim[1], 
+                stringr::str_extract(CELL_META$sector.index, "[^|]+$"), 
+                facing = "clockwise", 
+                niceFacing = TRUE, 
+                adj = c(0, 0.55), 
+                cex = 1)
+  }, bg.border = NA)
+  
+  # Split segments
+  for (l in segments) {
+    highlight.sector(l, track.index = 3, col = cell_cols2[l])
+  }
+  
+  # Add ligand/receptor track
+  ## Ligand
+  highlight.sector(input_df$source_lig, 
+                   track.index = 1, 
+                   col = "black", 
+                   text = "Ligands", 
+                   cex = 1, 
+                   text.col = "white", 
+                   niceFacing = TRUE)
+  ## Receptor
+  highlight.sector(input_df$target_rec, 
+                   track.index = 1, 
+                   col = "white", 
+                   text = "Receptors", 
+                   cex = 1, 
+                   text.col = "black", 
+                   border = "black", 
+                   niceFacing = TRUE)
+  
+  # Legends
+  minmax <- input_df %>% 
+    pull(score) %>% 
+    {pmax(abs(min(.)), max(.))} %>% 
+    formatC(digits = 1) %>% 
+    as.numeric()
+  
+  col.range = c(-minmax, 0, minmax)
+  lgd_links = Legend(at = col.range, 
+                     col_fun = colorRamp2(col.range, link.ramp.col), 
+                     title_position = "topleft", 
+                     title = "Links")
+  
+  lgd_ct <- Legend(labels = unique(c(input_df$source, input_df$target)), 
+                   title = "Cell type", 
+                   type = "points", 
+                   legend_gp = gpar(col = "transparent"), 
+                   background = cell_cols[unique(c(input_df$source, input_df$target))])
+  
+  lgd_list_vertical = packLegend(lgd_ct, lgd_links)
+  
+  draw(lgd_list_vertical, 
+       just = c("left", "bottom"), 
+       x = unit(5, "mm"), 
+       y = unit(5, "mm"))
+  
+  circos.clear()
+}
+```
+
+Plot
+
+```{r f7d3, fig.width=10, fig.height=8}
+dat.plot <- dat.raw %>% 
+  dplyr::rename(ligand = ligand_complex,
+                receptor = receptor_complex,
+                score = lrscore) %>%
+  filter(visit %in% c("visit1", "visit3"),
+         source == "ASPCs",
+         ligand %in% c("COL18A1", "NID1", "JAG1", "FGF2", "VEGFA", "BMP1", "ANGPT1", "MFGE8", "C3", "IGF1", "ANXA1", "ALCAM"),
+         receptor %in% c("ITGB5", "ITGAV", "CD46", "NRP1", "BMPR2", "ITGB1", "IGF2R", "INSR", "EGFR")) %>% 
+  group_by(visit, ligand, receptor, source, target) %>% 
+  summarize(score = mean(score)) %>% 
+  ungroup() %>% 
+  arrange(visit, source, target, ligand, receptor)
+
+dat.vis1 <- dat.plot %>% 
+  filter(visit == "visit1",
+         score > 0.8648) %>% 
+  mutate(lrst = paste0(ligand, receptor, source, target))
+
+dat.vis3 <- dat.plot %>% 
+  mutate(lrst = paste0(ligand, receptor, source, target)) %>% 
+  filter(visit == "visit3",
+         lrst %in% dat.vis1$lrst) 
+
+dat.rel <- dat.vis3 %>% 
+  mutate(score = score - dat.vis1$score)
+
+dat.rel %>% 
+  lianaCircos()
+```
+
+## Figure 7E
+
+Preparation
+
+```{r f7e, fig.width=7, fig.height=4}
+# Load Conos object
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+
+anno.faps <- qread("anno_aspc.qs")
+anno <- factor(c(anno.adipocytes, anno.faps))
+
+cm.merged <- con$getJointCountMatrix(raw = T) %>% 
+  Matrix::t() %>% 
+  .[, colnames(.) %in% names(anno)]
+
+# Use bins instead of anno
+spc <- con$getDatasetPerCell()
+
+anno.bin <- qread("sds_obj.qs")@assays@data@listData$pseudotime %>% 
+  as.data.frame() %>% 
+  filter(!is.na(Lineage1)) %>% 
+  {setNames(.$Lineage1, rownames(.))} %>% 
+  {data.frame(pseudotime = unname(.), anno = anno[names(.)], cid = names(.))} %>% 
+  mutate(bin = cut(pseudotime, breaks = c(0, 0.005, 0.01, 0.0165, 0.023))) %>% 
+  na.omit() %>% 
+  mutate(bin = as.character(bin) %>% 
+           strsplit(",") %>% 
+           sget(2) %>% 
+           gsub("]", "", ., fixed = T),
+         sample = spc[cid]) %>% 
+  mutate(sex = meta$sex[match(sample, meta$sample)],
+         visit = strsplit(as.character(sample), "_") %>% sget(3)) %>% 
+  mutate(anno.final = paste(sample, bin, sex, sep = "!!"))
+
+# Create pseudo CM
+anno.final <- anno.bin %>% 
+  pull(anno.final) %>% 
+  setNames(anno.bin$cid)
+
+cm.pseudo <- sccore::collapseCellsByType(cm.merged %>% Matrix::t(), 
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo %<>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T)
+```
+
+```{r f7e2, fig.width=7, fig.height=4}
+genes <- "C3"
+
+idx <- cm.pseudo %>% 
+  colnames() %>% 
+  data.frame(id = .) %>% 
+  mutate(vis = strsplit(id, "_|!!") %>% sget(3),
+         bin = strsplit(id, "!!") %>% sget(2),
+         sex = strsplit(id, "!!") %>% sget(3)) %>% 
+  mutate(ord = order(vis, bin, sex))
+
+x <- cm.pseudo %>% 
+  .[match(genes, rownames(.)), match(colnames(na.omit(.)), colnames(.))] %>%
+  .[idx$ord]
+
+plot.dat <- x %>% 
+  {data.frame(sample = names(.), 
+              value = unname(.))} %>% 
+  mutate(bin = strsplit(sample, "!!") %>% 
+           sget(2),
+         visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(labels = c("Visit 1", "Visit 2", "Visit 3")),
+         sex = strsplit(sample, "!!") %>% sget(3)) %>% 
+  mutate(sex_visit = paste(sex, gsub("Visit", "visit", visit), sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$bin)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$bin))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(bin, sex) %>%
+  wilcox_test(value~sex_visit, paired = F)
+
+stat.test %<>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "bin", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(bin, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", fill = "", title = "C3") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 1.5e3, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 0.2, hide.ns = F) # Wilcoxon
+```
+
+# Figure S1
+
+## Load data
+
+We provide lists with filtered count matrices per visit. Please note, we re-sequenced some samples that are renamed in the following.
+
+```{r s1load}
+cms <- c("vis1_cms_filtered.qs",
+         "vis2_cms_filtered.qs",
+         "vis3_cms_filtered.qs") %>% 
+  lapply(qread, nthreads = 10) %>% 
+  mapply(\(x,y) setNames(x, paste0(names(x), "_", y)), x = ., y = c("visit1", "visit2", "visit3")) %>% 
+  unlist() %>% 
+  .[!names(.) %in% c("Donor_25_poolB_visit3","Donor_29_poolA_visit3")] %>% 
+  setNames(gsub("_poolA|_poolB", "", names(.)))
+
+con.major <- qread("con_major.qs", nthreads = 10)
+
+spc <- con.major$getDatasetPerCell()
+```
+
+## Figure S1A
+
+```{r s1a, fig.width=8, fig.height=4}
+cms %>% 
+  lapply(\(x) diff(x@p)) %>% 
+  sapply(median) %>% 
+  {data.frame(sample = names(.), 
+              value = unname(.))} %>% 
+  mutate(visit = strsplit(sample, "_") %>% 
+           sget(3)) %>% 
+  mutate(sample = paste0("Donor", seq(14), "_", visit) %>% 
+           factor(., levels = unique(.))) %>% 
+  ggplot(aes(sample, value, fill = visit)) +
+  geom_col() +
+  theme_bw() +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) +
+  labs(x = "", y = "Median genes", fill = "") +
+  scale_fill_manual(values = ggsci::pal_jama()(3))
+```
+
+```{r s1a2}
+cms %>% 
+  lapply(sparseMatrixStats::colSums2) %>% 
+  sapply(median) %>% 
+  {data.frame(sample = names(.), 
+              value = unname(.))} %>% 
+  mutate(visit = strsplit(sample, "_") %>% 
+           sget(3)) %>% 
+  mutate(sample = paste0("Donor", seq(14), "_", visit) %>% 
+           factor(., levels = unique(.))) %>% 
+  ggplot(aes(sample, value, fill = visit)) +
+  geom_col() +
+  theme_bw() +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 6)) +
+  labs(x = "", y = "Median UMIs", fill = "") +
+  scale_fill_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S1B
+
+```{r s1b, fig.width=6, fig.height=4}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con.major$plotGraph(groups = varToPlot, 
+                    plot.na = F, 
+                    size = 0.1,
+                    alpha = 0.1, 
+                    embedding = "UMAP_refined7",
+                    mark.groups = F,
+                    show.labels = T,
+                    show.legend = T,
+                    title = "Donor") +
+  labs(x = "UMAP1", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+## Figure S1C
+
+```{r s1c, fig.width=6, fig.height=4}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var))
+
+con.major$plotGraph(groups = varToPlot, 
+                    plot.na = F, 
+                    size = 0.1,
+                    alpha = 0.1, 
+                    embedding = "UMAP_refined7",
+                    mark.groups = F,
+                    show.labels = T,
+                    show.legend = T,
+                    title = "Sex") +
+  labs(x = "UMAP1", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+## Figure S1D
+
+```{r s1d, fig.width=6, fig.height=4}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con.major$plotGraph(groups = varToPlot, 
+                    plot.na = F, 
+                    size = 0.1,
+                    alpha = 0.1, 
+                    embedding = "UMAP_refined7",
+                    mark.groups = F,
+                    show.labels = T,
+                    show.legend = T,
+                    title = "Visit") +
+  labs(x = "UMAP1", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+# Figure S2
+
+## Load data
+
+```{r s2}
+con <- qread("con_vascular.qs", nthreads = 10)
+anno.vascular <- qread("anno_vascular.qs")
+
+spc <- con$getDatasetPerCell()
+```
+
+## Figure S2A
+
+```{r s2a, fig.width=6, fig.height=4}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.3,
+              alpha = 0.1, 
+              embedding = "UMAP",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Donor") +
+  labs(x = "UMAP2", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+## Figure S2B
+
+```{r s2b, fig.width=6, fig.height=4}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var))
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.1,
+              alpha = 0.1, 
+              embedding = "UMAP",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Sex") +
+  labs(x = "UMAP1", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+## Figure S2C
+
+```{r s2c, fig.width=6, fig.height=4}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.3,
+              alpha = 0.1, 
+              embedding = "UMAP",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Visit") +
+  labs(x = "UMAP1", y = "UMAP2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+# Figure S3
+
+## Figure S3B-G
+
+### Load data
+
+```{r s3bg}
+con <- qread("con_lymphoid.qs", nthreads = 10)
+anno.lymphoid <- qread("anno_lymphoid.qs")
+
+spc <- con$getDatasetPerCell()
+```
+
+### Figure S3B
+
+```{r s3b}
+con$plotGraph(groups = anno.lymphoid, 
+              plot.na = F, 
+              size = 0.8,
+              alpha = 1, 
+              embedding = "largeVis", 
+              shuffle.colors = T, 
+              show.labels = T, 
+              font.size = 5,
+              show.legend = T,
+              mark.groups = T) + 
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  scale_colour_manual(values = RColorBrewer::brewer.pal(9, "YlOrBr")[-c(1,2)][c(1,4,5,2,6)]) +
+  dotSize(3)
+```
+
+### Figure S3C
+
+```{r s3c}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = paste0("Donor", seq(14))) %>% 
+  .[names(.) %in% names(anno.lymphoid)]
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.5,
+              alpha = 0.8, 
+              embedding = "largeVis",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Donor") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+### Figure S3D
+
+```{r s3d}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var)) %>% 
+  .[names(.) %in% names(anno.lymphoid)]
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.5,
+              alpha = 0.8, 
+              embedding = "largeVis",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Sex") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+### Figure S3E
+
+```{r s3e}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor() %>% 
+  .[names(.) %in% names(anno.lymphoid)]
+
+con$plotGraph(groups = varToPlot, 
+              plot.na = F, 
+              size = 0.5,
+              alpha = 0.8, 
+              embedding = "largeVis",
+              mark.groups = F,
+              show.labels = T,
+              show.legend = T,
+              title = "Visit") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+### Figure S3F
+
+```{r s3f}
+cm.merged <- con$getJointCountMatrix() %>% 
+  .[rownames(.) %in% names(anno.lymphoid), ]
+
+c("FOXP3", "CTLA4",
+  "IL7R", "CD4",
+  "CD40LG", "CD8A",
+  "GZMK", "GZMH",
+  "GNLY", "KLRD1",
+  "KLRF1", "NCAM1"
+) %>% 
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.lymphoid %>% 
+                    factor(levels = c("Treg", "CD4 T cells", "CD8 T cells", "NK-like T cells", "NK")), 
+                  gene.order = ., 
+                  cols = c("white","yellow4"))
+```
+
+### Figure S3G
+
+```{r s3g}
+con.major <- qread("con_major.qs", nthreads = 10)
+anno.major <- qread("anno_major.qs")
+
+# Use Cacoa to calculate proportions
+cao <- Cacoa$new(data.object = con.major, 
+                 cell.groups = anno.major, 
+                 ref.level = "vis2", 
+                 target.level = "vis3",
+                 sample.groups = con.major$samples %>% 
+                   names() %>% 
+                   strsplit("_") %>% 
+                   sapply('[[', 3) %>% 
+                   gsub(1, 2, .) %>% 
+                   `names<-`(con.major$samples %>% 
+                               names()),
+                 sample.groups.palette = ggsci::pal_jama()(7))
+
+cao$sample.groups <- con.major$samples %>% 
+  names() %>% 
+  strsplit("_") %>% 
+  sapply('[[', 3) %>% 
+  `names<-`(con.major$samples %>% 
+              names()) %>% 
+  gsub("vis", "Visit ", .)
+
+anno.comb <- anno.major[!names(anno.major) %in% names(anno.lymphoid)] %>% 
+  {factor(c(., anno.lymphoid))}
+
+p <- cao$plotCellGroupSizes(cell.groups = anno.comb,
+                            show.significance = F, 
+                       filter.empty.cell.types = F)
+```
+
+```{r s3g2, fig.height=4, fig.width=6}
+plot.dat <- p$data %>% 
+  filter(variable %in% levels(anno.lymphoid)) %>% 
+  mutate(sex = rep(meta$sex, anno.lymphoid %>% levels() %>% length()),
+         variable = factor(variable)) %>% 
+  mutate(sex_visit = paste(sex, group, sep = " ") %>% gsub("Vis", "vis", .),
+         variable = factor(variable, levels = c("Treg", "CD4 T cells", "CD8 T cells", "NK-like T cells", "NK")))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$variable)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$group)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$variable))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(var, sex) %>%
+  wilcox_test(value~sex_visit, paired = T) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "var", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(variable, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "% cells per sample", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 90, vjust = 0, hjust = 1)) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 5, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 1, hide.ns = F) # Wilcoxon
+```
+
+## Figure S3H-J
+
+### Load data
+
+```{r s3hj}
+con <- qread("con_myeloid.qs", nthreads = 10)
+anno.immune <- qread("anno_immune.qs")
+
+spc <- con$getDatasetPerCell()
+```
+
+### Figure S3H
+
+```{r s3h}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Donor") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+### Figure S3I
+
+```{r s3i}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var))
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.1,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Sex") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+### Figure S3J
+
+```{r s3j}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Visit") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S3L
+
+Preparations
+
+```{r s3l}
+cts <- c("Early LAM", "LAM", "mono/mac", "ATM")
+
+cm.merged <- con$getJointCountMatrix(raw = T)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.immune[anno.immune %in% cts] %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+  
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names()) %>%
+  gsub("Foam-like Mac", "Early LAM", .)
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T) %>% 
+  t()
+```
+
+```{r s3l2}
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% c("HLA-B")] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ATM", "mono/mac", "Early LAM", "LAM")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = "HLA-B") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 400, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) # Wilcoxon
+```
+
+# Figure S4
+
+## Figure S4A-C
+
+### Load data
+
+```{r s4ac}
+con <- qread("con_aspc.qs", nthreads = 10)
+anno.aspc <- qread("anno_aspc.qs")
+
+spc <- con$getDatasetPerCell()
+```
+
+### Figure S4A
+
+```{r s4a}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Donor") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+### Figure S4B
+
+```{r s4b}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var))
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.1,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Sex") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+### Figure S4C
+
+```{r s4c}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Visit") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S4F-G
+
+### Prepare data
+
+```{r s4fg, fig.width=6, fig.height=4}
+cm.merged <- con$getJointCountMatrix(raw = T)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.aspc %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+  
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T) %>% 
+  t()
+```
+
+### Figure S4F
+
+```{r s4f}
+gene = "HSP90B1"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 300, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+### Figure S4G
+
+```{r s4g, fig.width=6, fig.height=4}
+gene = "JUN"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 600, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+```{r s4g2, fig.width=6, fig.height=4}
+gene = "FOS"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 2e3, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+```{r s4g3, fig.width=6, fig.height=4}
+gene = "FOSB"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>% 
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 1.6e3, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+## Figure S4H
+
+See `Scenic.ipynb` for `mat` object calculation.
+
+```{r s4h, fig.height = 16, fig.width = 16}
+mat <- fastMatMR::fmm_to_mat("aspc_adi_auc_mat.mtx") %>% 
+  `dimnames<-`(list(
+    read.table("aspc_adi_auc_mat.rownames", header = T)[, 1],
+    read.table("aspc_adi_auc_mat.colnames", header = T)[, 1]
+  ))
+
+con.major <- qread("con_major.qs", nthreads = 10)
+spc <- con.major$getDatasetPerCell()
+vpc <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc))
+```
+
+```{r s4h2, fig.height = 4, fig.width = 5}
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.comb <- factor(c(anno.adipocytes, anno.aspc))
+
+plot.dat.tmp <- c("FOS(+)", "FOSB(+)") %>% # ZEB1 is just a random pick to make it easier to manipulate data, omitted later
+  {mat[, colnames(mat) %in% .]} %>% 
+  as.data.frame() %>%
+  mutate(., 
+         visit = unname(vpc)[match(rownames(.), 
+                                   names(vpc) %>% 
+                                     strsplit("!!") %>% 
+                                     sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ],
+         anno = unname(anno.comb)[match(rownames(.),
+                                        names(anno.comb) %>% 
+                                          strsplit("!!") %>% 
+                                          sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ],
+         sample = unname(spc)[match(rownames(.), 
+                                    names(spc) %>% 
+                                      strsplit("!!") %>% 
+                                      sapply(\(x) paste0(x[2],"!!",x[3]))
+         )
+         ]
+  ) %>% 
+  filter(!is.na(anno)) %>% 
+  reshape2::melt(id.vars = c("visit", "anno", "sample")) %>% 
+  mutate(anno_vis = paste0(anno,"_",visit),
+         anno_var = paste0(anno,"_",variable)) %>% 
+  group_by(visit, anno, variable, sample) %>% 
+  summarize(mm = median(value)) %>% 
+  ungroup() %>% 
+  filter(#variable == "JUN(+)",
+         !anno == "Adipocytes") %>% 
+  mutate(anno = factor(anno, levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3", "Adipocytes")),
+         visit = factor(visit, levels = c("vis1", "vis2", "vis3"), labels = c("Visit 1", "Visit 2", "Visit 3")),
+         sex = meta$sex[match(.$sample, meta$sample)],
+         variable = factor(variable)) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " ") %>% gsub("Visit", "visit", .),
+         anno = factor(anno, levels = c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")))
+```
+
+```{r s4h3, fig.height=4, fig.width=8}
+plot.dat <- plot.dat.tmp %>% 
+  filter(variable == "FOS(+)")
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$mm, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$anno))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(mm~sex_visit, paired = TRUE) %>%
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(anno, mm)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Mean AUC", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 6, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 2, hide.ns = F) # Wilcoxon
+```
+
+```{r s4h4, fig.height=4, fig.width=8}
+plot.dat <- plot.dat.tmp %>% 
+  filter(variable == "FOSB(+)")
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$mm, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(ct = factor(ct, levels = unique(plot.dat$anno))) %>% 
+  arrange(ct) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(mm~sex_visit, paired = TRUE) %>%
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+  arrange(desc(y.position))
+
+# Plot
+ggplot(plot.dat, aes(anno, mm)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+             color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Mean AUC", fill = "") +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 6, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 2, hide.ns = F) # Wilcoxon
+```
+
+# Figure S5
+
+## Load data
+
+```{r s5}
+con <- qread("con_adipocytes.qs", nthreads = 10)
+
+spc <- con$getDatasetPerCell()
+```
+
+## Figure S5A
+
+```{r s5a}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_vis") %>% 
+  sget(1) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Donor") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3)
+```
+
+## Figure S5B
+
+```{r s5b}
+var <- meta$sex
+
+varToPlot <- grepl.replace(spc %>% 
+                             as.character(), 
+                           meta$sample, 
+                           var) %>% 
+  setNames(names(spc)) %>% 
+  factor(labels = unique(var))
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Sex") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = c("firebrick", "navy"))
+```
+
+## Figure S5C
+
+```{r s5c}
+varToPlot <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc)) %>% 
+  factor()
+
+con$plotGraph(groups = varToPlot, 
+                   plot.na = F, 
+                   size = 0.3,
+                   alpha = 0.1, 
+                   embedding = "largeVis",
+                   mark.groups = F,
+                   show.labels = T,
+                   show.legend = T,
+                   title = "Visit") +
+  labs(x = "largeVis1", y = "largeVis2", col = "") + 
+  theme(line = element_blank()) +
+  dotSize(3) +
+  scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S5D
+
+Please note, the clustering algorithm holds some randomness, clusters will not always be the same.
+
+```{r s5d, fig.width=8, fig.height=8}
+con$findCommunities(name = "leiden1", resolution = 0.5)
+con$findCommunities(name = "leiden2", resolution = 0.5)
+con$findCommunities(name = "leiden3", resolution = 0.5)
+con$findCommunities(name = "leiden4", resolution = 0.5)
+
+seq(4) %>% 
+  lapply(\(x) {
+    con$plotGraph(embedding = "largeVis", clustering = paste0("leiden",x), font.size = 6) +
+  theme(line = element_blank()) +
+  scale_color_manual(values = RColorBrewer::brewer.pal(4, "Reds")[-1])
+  }) %>% 
+  cowplot::plot_grid(plotlist = ., ncol = 2)
+```
+
+## Figure S5E
+
+Please note, the clustering algorithm holds some randomness, stabilities will not always be the same.
+
+```{r s5e}
+con$findCommunities(resolution = 0.5, test.stability = T, name = "l05stab")
+
+plot_grid(plotlist = list(
+  con$plotClusterStability("l05stab", "ari") +
+    theme_bw() +
+    theme(line = element_blank(),
+          axis.text.x = element_blank()) + 
+    geom_boxplot(aes(col = "#E41A1C"), notch = T) +
+    labs(x = " \n "),
+  con$plotClusterStability("l05stab", "hjc") + 
+    theme_bw() +
+    theme(line = element_blank()) + 
+    scale_color_manual(values = RColorBrewer::brewer.pal(4, "Reds")[-1])
+), ncol = 2, rel_widths = c(1.3,3))
+```
+
+## Figure S5F
+
+Please note, the clustering algorithm holds some randomness, stabilities will not always be the same.
+
+```{r s5f}
+con$findCommunities(resolution = 1, test.stability = T, name = "l05stab")
+
+plot_grid(plotlist = list(
+  con$plotClusterStability("l05stab", "ari") +
+    theme_bw() +
+    theme(line = element_blank(),
+          axis.text.x = element_blank()) + 
+    geom_boxplot(aes(col = "#E41A1C"), notch = T) +
+    labs(x = " \n "),
+  con$plotClusterStability("l05stab", "hjc") + 
+    theme_bw() +
+    theme(line = element_blank()) + 
+    scale_color_manual(values = RColorBrewer::brewer.pal(8, "Reds")[-1])
+), ncol = 2, rel_widths = c(1.3,3))
+```
+
+## Figure S5G
+
+```{r s5g}
+cm.merged <- con$getJointCountMatrix()
+
+anno.adipocytes <- qread("anno_adipocytes_archetypes.qs")
+
+c("PRSS23","PDE5A","ADIPOQ","DGAT2", "GPAM", "LPL", "DCN", "VIM", "RORA", "CLSTN2", "CRIM1", "ITGA1") %>% 
+  sccore::dotPlot(., 
+                  cm.merged, 
+                  anno.adipocytes, 
+                  gene.order = ., 
+                  cols = c("white","red3"))
+```
+
+## Figure S5H-I
+
+### Preparation
+
+```{r s5hi, fig.width=6, fig.height=4}
+cm.merged <- con$getJointCountMatrix(raw = T)
+
+# Create sample-wise annotation
+anno.donor <- con$getDatasetPerCell()[rownames(cm.merged)]
+anno.subtype <- anno.adipocytes %>% 
+  .[!is.na(.)] %>% 
+  factor()
+
+idx <- intersect(anno.donor %>% names(), anno.subtype %>% names())
+  
+anno.donor %<>% .[idx]
+anno.subtype %<>% .[idx] %>% 
+  {`names<-`(as.character(.), names(.))}
+
+anno.final <- paste0(anno.donor,"!!",anno.subtype) %>% 
+  `names<-`(anno.donor %>% names())
+
+cm.pseudo.tmp <- sccore::collapseCellsByType(cm.merged,
+                                         groups = anno.final, min.cell.count = 1) %>% 
+  t() %>%
+  apply(2, as, "integer")
+
+cm.pseudo <- cm.pseudo.tmp %>% 
+  DESeq2::DESeqDataSetFromMatrix(., 
+                                 colnames(.) %>% 
+                                   strsplit("_|!!") %>% 
+                                   sget(3) %>% 
+                                   data.frame() %>% 
+                                   `dimnames<-`(list(colnames(cm.pseudo.tmp), "group")), 
+                                 design = ~ group) %>% 
+  DESeq2::estimateSizeFactors() %>% 
+  DESeq2::counts(normalized = T) %>% 
+  t()
+```
+
+### Figure S5H
+
+```{r s5h, fig.width=6, fig.height=4}
+gene = "MAP3K5"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 200, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+```{r s5h2, fig.width=6, fig.height=4}
+gene = "AKT3"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 100, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+### Figure S5I
+
+```{r s5i, fig.width=6, fig.height=4}
+gene = "ADAMTS10"
+
+plot.dat <- cm.pseudo %>% 
+  .[, colnames(.) %in% gene] %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column(var = "sample") %>% 
+  mutate(visit = strsplit(sample, "!!|_") %>% 
+           sget(3) %>% 
+           factor(levels = c("vis1", "vis2", "vis3"), labels = c("visit 1", "visit 2", "visit 3")),
+         anno = strsplit(sample, "!!") %>% 
+           sget(2) %>% 
+           factor(levels = c("DGAT2_archetype", "CLSTN2_archetype", "PRSS23_archetype")),
+         donor = strsplit(sample, "!!") %>% 
+           sget(1)) %>% 
+  reshape2::melt(id.vars = c("sample", "visit", "anno", "donor")) %>%
+  mutate(sex = meta$sex[match(donor, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, visit, sep = " "))
+
+# Kruskal-Wallis
+sex.stat <- plot.dat %$% 
+  split(., sex) %>% 
+  lapply(\(x) split(x, x$anno)) %>% 
+  lapply(lapply, \(x) kruskal.test(x$value, g = x$visit)$p.value) %>% 
+  lapply(sapply, gtools::stars.pval) %>% 
+  {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+  `names<-`(c("Female","Male")) %>% 
+  lapply(\(x) data.frame(anno = names(x), sig = unname(x))) %>% 
+  {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+  bind_rows() %>% 
+  mutate(anno = factor(anno, levels = unique(plot.dat$anno))) %>% 
+  arrange(anno) %>% 
+  mutate(sig = gsub(".", "", sig, fixed = T))
+
+# Wilcoxon
+stat.test <- plot.dat %>%
+  dplyr::rename(var = variable) %>% # add_xy... already uses "variable", need to rename
+  group_by(anno, sex) %>%
+  wilcox_test(value~sex_visit, paired = F) %>%
+  mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
+  filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+  add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
+
+plot.dat %>% 
+  ggplot(aes(anno, value)) + 
+  geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+  geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1),
+        color = "black", size = 0.5, alpha = 0.2) +
+  theme_bw() +
+  labs(x = "", y = "Normalized pseudobulk expression", title = gene) +
+  theme(line = element_blank(),
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text = element_text(color = "black")) +
+  scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+  geom_text(inherit.aes = F, data = sex.stat, aes(anno, y = 200, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 3, hide.ns = F) + # Wilcoxon
+  guides(fill = "none")
+```
+
+# Figure S6
+
+## Figure S6A-C
+
+### Preparations
+
+We downsampled to 15k nuclei due to calculation times. We provide `sds_obj_reduced.qs` for slingshot pseudotime estimations for the downsampled dataset.
+
+Here, we calculate for visit 1 and visit 3.
+
+```{r s6ac, eval = F}
+sds_obj <- qread("sds_obj_reduced.qs")
+
+pseudotime <- sds_obj@assays@data@listData$pseudotime[, 1] %>% 
+  .[!is.na(.)]
+
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+
+mat <- con$getJointCountMatrix() %>%
+  .[match(names(pseudotime), rownames(.)), colSums(.) > 2e2]
+
+mt <- mat %>%
+  as.matrix() %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column() %>%
+  {message("Mutating"); mutate(.,
+                               pseudotime = pseudotime[rowname],
+                               visit = con$getDatasetPerCell()[rowname] %>%
+                                 as.character() %>%
+                                 strsplit("_") %>%
+                                 sget(3),
+                               donor = strsplit(rowname, "!!") %>%
+                                 sget(1))} %>%
+  .[complete.cases(.), ] %>%
+  {message("Melting"); reshape2::melt(., id.vars = c("rowname", "pseudotime", "visit", "donor"))} %$%
+  {message("Splitting"); split(., variable)}
+```
+
+The calculations take app. 11 h with 14k genes and 10k cells. We've added pre-calculated results as `pseudotime_res_novis2.qs`.
+
+```{r s6ac2, eval = F}
+res <- mt %>% 
+  sccore::plapply(\(y) {
+    x = y %>% 
+      filter(!visit == "vis2")
+    
+    fit_full <- gamm4(data = x, formula = value ~ s(pseudotime, by = factor(visit)), random = ~(1 | donor), REML = F)
+    fit_reduced <- gamm4(data = x, formula = value ~ s(pseudotime), random = ~(1 | donor), REML = F)
+    fit_none <- gamm4(data = x, formula = value ~ 1, random = ~(1 | donor), REML = F)
+    
+    ann <- anova(fit_full$mer, fit_reduced$mer, fit_none$mer)
+    
+    if (any(ann$`Pr(>Chisq)` <= 0.05, na.rm = T)) {
+      residuals <- predict(fit_full$gam, se.fit = T)$fit %>% 
+        unname()
+      
+      r.sq <- c(summary(fit_full$gam)$r.sq, summary(fit_reduced$gam)$r.sq) %>% 
+        setNames(c("full", "reduced"))
+      
+      out <- list(annova = ann,
+                  residuals = residuals,
+                  r.sq = r.sq)
+      
+      return(out)
+    }
+  }, n.cores = 5, mc.preschedule = T, mc.cleanup = T, progress = F) # 10 cores fails, 5 is max tested that finishes
+```
+
+### Figure S6A,B
+
+Load data. For ease, we also provide pseudotime W/O visit 2 nuclei. We need the `sds_obj` from Figure 6A. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
+
+```{r s6ab}
+res <- qread("pseudotime_res_novis2.qs", nthreads = 10) %>% 
+  .[!sapply(., is.null)]
+
+sds_obj <- qread("sds_obj.qs")
+
+pseudotime <- qread("pseudotime_novis2.qs")
+
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+```
+
+```{r s6ab2}
+both <- res %>%
+  sapply(\(gene) {
+    ann <- gene$annova
+    (ann[2, "Pr(>Chisq)"] <= 0.05 & ann[3, "Pr(>Chisq)"] <= 0.05)
+  })
+
+res.both <- res[both]
+
+rsq.both <- res.both %>% 
+  sapply(\(gene) gene$r.sq[1]) %>% # Ranking by r2 for pseudotime
+  sort(decreasing = T)
+
+res.filter <- res.both %>% 
+  .[rsq.both %>% .[. > 0.2] %>% names() %>% gsub(".full", "", .)]
+
+cm.merged <- con$getJointCountMatrix() %>% 
+  .[match(names(pseudotime), rownames(.)), colnames(.) %in% names(res.filter)] %>% 
+  .[rowSums(.) > 0, ]
+
+## Predict smoothend expression 
+pseudotime.both <- pseudotime[rownames(cm.merged)]
+weights.both <- sds_obj@assays@data@listData$weights %>% .[match(names(pseudotime.both), rownames(.)), 1] + 1E-7
+
+scFit <- cm.merged %>% 
+  Matrix::t() %>% 
+  tradeSeq::fitGAM(pseudotime = pseudotime.both, cellWeights = weights.both, verbose = T)
+
+Smooth <- tradeSeq::predictSmooth(scFit, gene = colnames(cm.merged), tidy = F, n=100)
+
+# Average across replicates and scale
+Smooth <- t(scale(t(Smooth)))
+
+# Seriate the results
+Smooth <- Smooth[ seriation::get_order(seriation::seriate(Smooth, method="PCA_angle")), ]
+
+# Omit MALAT1
+Smooth %<>% .[!rownames(.) == "MALAT1", ]
+
+# Create heatmap
+gene.subset <- which(rownames(Smooth) %in% c("PDGFRB", "DCN", "FBN1", "LPL", "ADIPOQ"))
+labels <- rownames(Smooth)[gene.subset]
+lannot <- rowAnnotation(link = anno_mark(at = gene.subset,
+                                         labels = labels,
+                                         labels_gp = grid::gpar(fontsize = 7)))
+
+col_fun = circlize::colorRamp2(c(-4, 0, 4), c("navy", "white", "firebrick"))
+
+Heatmap(Smooth, 
+             col = col_fun,
+             cluster_columns=F, 
+             cluster_rows=F, 
+             show_column_names = F, 
+             show_row_names = F,
+             left_annotation = lannot)
+```
+
+```{r s6ab3}
+repressed.start <- 1
+tempinduced.start = which(rownames(Smooth) == "SMOC2")
+tempinduced.end <- which(rownames(Smooth) == "APOD")
+repressed.end <- tempinduced.start - 1
+induced.start <- tempinduced.end + 1
+induced.end <- nrow(Smooth)
+
+go.list <- Smooth %>% 
+  rownames() %>% 
+  {
+    list(
+      repressed = .[repressed.start : repressed.end],
+      tempinduced = .[tempinduced.start : tempinduced.end],
+      induced = .[induced.start : induced.end]
+    )
+  } %>% 
+  lapply(\(x) clusterProfiler::enrichGO(x, 
+                                OrgDb = org.Hs.eg.db::org.Hs.eg.db, 
+                                keyType = "SYMBOL", 
+                                ont = "BP", 
+                                universe = rownames(con$samples[[1]])))
+
+go.list %>% 
+  lapply(getElement, "result") %>% 
+  lapply(head, 10)
+```
+
+### Figure S6C
+
+Figure S6A needs to be calculated first. We obtain list with human transcription factors from public resource.
+
+```{r s6c}
+tfs <- read.table("https://humantfs.ccbr.utoronto.ca/download/v_1.01/TF_names_v_1.01.txt") %>% 
+  pull(V1)
+
+tf.filter <- intersect(names(res.filter), tfs)
+
+cm.merged <- con$getJointCountMatrix() %>% 
+  .[match(names(pseudotime), rownames(.)), colnames(.) %in% tf.filter] %>% 
+  .[rowSums(.) > 0, ]
+
+## Predict smoothend expression 
+pseudotime.both <- pseudotime[rownames(cm.merged)]
+weights.both <- sds_obj@assays@data@listData$weights %>% .[match(names(pseudotime.both), rownames(.)), 1] + 1E-7
+
+scFit <- cm.merged %>% 
+  Matrix::t() %>% 
+  tradeSeq::fitGAM(pseudotime = pseudotime.both, cellWeights = weights.both, verbose = T)
+
+Smooth <- tradeSeq::predictSmooth(scFit, gene = colnames(cm.merged), tidy = F, n=100)
+
+# Average across replicates and scale
+Smooth <- t(scale(t(Smooth)))
+
+# Seriate the results
+Smooth <- Smooth[ seriation::get_order(seriation::seriate(Smooth, method="PCA_angle")), ]
+
+# Omit MALAT1
+Smooth %<>% .[!rownames(.) == "MALAT1", ]
+
+col_fun = circlize::colorRamp2(c(-4, 0, 4), c("navy", "white", "firebrick"))
+
+Heatmap(Smooth, 
+             col = col_fun,
+             cluster_columns=F, 
+             cluster_rows=F, 
+             show_column_names = F, 
+             row_names_gp = grid::gpar(fontsize = 10)
+             )
+```
+
+## Figure S6D
+
+We need the `sds_obj` object from Figure 6A.
+
+```{r s6d, fig.height = 16, fig.width = 16}
+con <- qread("con_adipocytes_aspc.qs", nthreads = 10)
+spc <- con$getDatasetPerCell()
+vpc <- spc %>% 
+  as.character() %>% 
+  strsplit("_|!!") %>% 
+  sget(3) %>% 
+  setNames(names(spc))
+
+anno.adipocytes <- qread("anno_major.qs") %>% 
+  .[. == "Adipocytes"] %>% 
+  factor()
+anno.aspc <- qread("anno_aspc.qs")
+anno <- factor(c(anno.adipocytes, anno.aspc))
+
+cm.merged <- con$getJointCountMatrix()
+```
+
+```{r s6d2}
+mat.df <- c("ZEB1", "EBF2", "PPARG") %>%
+  {cm.merged[, colnames(cm.merged) %in% .]} %>% 
+  as.matrix() %>% 
+  as.data.frame() %>% 
+  mutate(., 
+         visit = unname(vpc)[match(rownames(.), 
+                                   names(vpc)
+                                   )
+                             ] %>% 
+           factor(labels = c("Visit 1", "Visit 2", "Visit 3")),
+         anno = unname(anno)[match(rownames(.),
+                                   names(anno)
+                                   )
+                             ],
+         sample = unname(spc)[match(rownames(.), 
+                                   names(spc)
+                                   )
+                             ]
+         ) %>% 
+  filter(!is.na(anno))
+
+pseudotime_all <- qread("sds_obj.qs", nthreads = 10)@assays@data@listData$pseudotime %>% 
+  as.data.frame() %>% 
+  filter(!is.na(Lineage1)) %>% 
+  {setNames(.$Lineage1, rownames(.))}
+
+mat.df %<>% .[match(names(pseudotime_all), rownames(.), nomatch = F), ]
+
+pseudotime_all %<>% .[rownames(mat.df)]
+
+mat.df2 <- mat.df %>% 
+  mutate(pseudotime = pseudotime_all) %>% 
+  mutate(bin = cut(pseudotime, breaks = c(0, 0.005, 0.01, 0.0165, 0.023))) %>% 
+  na.omit() %>% 
+  mutate(bin = as.character(bin) %>% 
+           strsplit(",") %>% 
+           sget(2) %>% 
+           gsub("]", "", ., fixed = T)) %>%
+  select(-anno, -pseudotime) %>%
+  reshape2::melt(id.vars = c("visit", "bin", "sample")) %>% 
+  filter(value > 0) %>% 
+  group_by(visit, variable, bin, sample) %>% 
+  mutate(value = as.numeric(value)) %>% 
+  summarize(mm = mean(value)) %>% 
+  mutate(sex = meta$sex[match(sample, meta$sample)]) %>% 
+  mutate(sex_visit = paste(sex, gsub("Visit", "visit", visit), sep = " "))
+```
+
+```{r s6d3, fig.width=16, fig.height=4}
+mat.df2 %>% 
+  pull(variable) %>% 
+  unique() %>% 
+  as.character() %>% 
+  lapply(\(vv) {
+    plot.dat <- mat.df2 %>% 
+      filter(variable == vv) %>%
+    ungroup() %>%
+      mutate(sex = meta$sex[match(.$sample, meta$sample)]) %>% 
+      mutate(sex_visit = paste(sex, visit, sep = " ") %>% gsub("Visit", "visit", .))
+    
+    # Kruskal-Wallis
+    sex.stat <- plot.dat %$% 
+      split(., sex) %>% 
+      lapply(\(x) split(x, x$bin)) %>% 
+      lapply(lapply, \(x) kruskal.test(x$mm, g = x$visit)$p.value) %>% 
+      lapply(sapply, gtools::stars.pval) %>% 
+      {lapply(seq(length(.)), \(x) gsub("*", c("$","#")[x], .[[x]], fixed = T))} %>% 
+      `names<-`(c("Female","Male")) %>% 
+      lapply(\(x) data.frame(ct = names(x), sig = unname(x))) %>% 
+      {lapply(names(.), \(nn) mutate(.[[nn]], sex = nn))} %>% 
+      bind_rows() %>% 
+      mutate(ct = factor(ct, levels = unique(plot.dat$bin))) %>% 
+      arrange(ct) %>% 
+      mutate(sig = gsub(".", "", sig, fixed = T))
+    
+    # Wilcoxon
+    stat.test <- plot.dat %>%
+      group_by(bin, sex) %>%
+      wilcox_test(mm~sex_visit, paired = F) %>% 
+      filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
+      add_xy_position(x = "bin", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05) %>% # Adjust line position
+      arrange(desc(y.position))
+    
+    # Plot
+    ggplot(plot.dat, aes(bin, mm)) + 
+      geom_boxplot(aes(fill = sex_visit), position = position_dodge(), outlier.shape = NA) +
+      geom_point(aes(fill = sex_visit), position = position_jitterdodge(jitter.width = 0.1), 
+                 color = "black", size = 0.5, alpha = 0.2) +
+      theme_bw() +
+      labs(x = "", y = "Mean AUC", fill = "", title = vv) +
+      theme(line = element_blank(),
+            axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+            axis.text = element_text(color = "black")) +
+      scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
+      geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 1.4, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
+      stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 0.2, hide.ns = F) # Wilcoxon
+  }) %>% 
+  cowplot::plot_grid(plotlist = ., ncol = 3)
+```
+
+# Session info
+
+Time to knit
+
+```{r}
+Sys.time() - tt
+```
+
+```{r}
+sessionInfo()
+```

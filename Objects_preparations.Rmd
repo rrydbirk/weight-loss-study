@@ -1,0 +1,264 @@
+---
+title: "Objects preparation"
+author: "Rasmus Rydbirk"
+date: "2024-11-11"
+output: 
+  html_document:
+    toc: True
+    toc_float: True
+---
+
+# Setup
+
+```{r setup, message=FALSE}
+library(pagoda2)
+library(conos)
+library(qs)
+library(dplyr)
+library(magrittr)
+library(scHelper) # github.com/rrydbirk/scHelper
+```
+
+# Conos objects
+
+## Load annotation
+
+```{r}
+anno.major <- qread("anno_major.qs")
+```
+
+## con_major
+
+```{r, eval = F}
+con.major <- append(cms.preprocessed.vis1, 
+                    cms.preprocessed.vis2) %>% 
+  append(cms.preprocessed.vis3) %>% 
+  Conos$new(n.cores = 32)
+
+con.major$buildGraph()
+con.major$findCommunities()
+con.major$embedGraph(method = "UMAP", embedding.name = "UMAP_refined7", min.dist = 0.0001, n.neighbors = 120, spread = 5)
+con.major$embedGraph(method = "largeVis", embedding.name = "largeVis")
+
+qsave("con_major.qs", nthreads = 10)
+```
+
+## con_adipocytes
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major == "Adipocytes"]]) %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave("con_adipocytes.qs", nthreads = 10)
+```
+
+## con_adipocytes_aspc_macrophages
+
+```{r, eval = F}
+anno.immune <- qread("anno_immune.qs") %>% 
+  .[. %in% c("ATM", "Early LAM", "LAM", "mono/mac")]
+
+anno.aspc <- qread("anno_aspc.qs")
+
+anno <- qread("anno_major_final.qs") %>% 
+  .[!names(.) %in% names(anno.immune)] %>% 
+  .[!names(.) %in% names(anno.aspc)] %>% 
+  {factor(c(., anno.immune, anno.aspc))}
+
+cts <- c("ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3", "ASPC_DPP4", "Adipocytes", "ATM","Early LAM", "LAM", "mono/mac")
+
+anno <- anno[anno %in% cts] %>% 
+  factor()
+
+qsave(anno, "anno_adipocytes_aspc_macrophages.qs")
+
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno)[anno %in% cts]])
+
+con %<>% lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+
+qsave(con, "con_adipocytes_aspc_macrophages.qs")
+```
+
+## con_aspc
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major == "ASPC"]]) %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave(con, "con_aspc.qs", nthreads = 10)
+```
+
+## con_myeloid
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major == "Myeloid immune cells")]]) %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave(con, "con_myeloid.qs", nthreads = 10)
+```
+
+## con_lymphoid
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major == "Lymphoid immune cells"]]) %>% 
+  .[sapply(., ncol) > 30] %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32, nPcs = 20) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave(con, "con_lymphoid.qs", nthreads = 10)
+```
+
+## con_immune
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major %in% c("Lymphoid immune cells", "Myeloid immune cells")]]) %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave(con, "con_immune.qs", nthreads = 10)
+```
+
+## con_vascular
+
+```{r, eval = F}
+con <- con.major$samples %>% 
+  lapply('[[', "misc") %>% 
+  lapply('[[', "rawCounts") %>% 
+  lapply(Matrix::t) %>% 
+  lapply(\(cm) cm[, colnames(cm) %in% names(anno.major)[anno.major %in% c("ECs", "SMCs", "Lymphatic ECs", "Pericytes")]]) %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32, nPcs = 50) %>% 
+  Conos$new(n.cores = 32)
+
+con$buildGraph()
+con$findCommunities()
+con$embedGraph(method = "UMAP", embedding.name = "UMAP")
+con$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con$findCommunities(resolution = 0.5, name = "leiden0.5")
+con$findCommunities(resolution = 1.5, name = "leiden1.5")
+
+qsave(con, "con_vascular.qs", nthreads = 10)
+```
+
+# Export data to Python
+
+## aspc_adi_macro objects
+
+```{r}
+con <- qread("con_adipocytes_aspc_macrophages.qs", nthreads = 10)
+annotation <- qread("anno_adipocytes_aspc_macrophages.qs")
+
+prepareObjectsForPython(con, 
+                        annotation,
+                        "",
+                        "aspc_adi_macro",
+                        "largeVis")
+```
+
+## major objects
+
+```{r}
+con <- qread("con_major.qs", nthreads = 10)
+annotation <- qread("anno_major.qs")
+
+prepareObjectsForPython(con, 
+                        annotation,
+                        "",
+                        "major",
+                        "UMAP")
+
+# Visits
+spc <- con$getDatasetPerCell()
+
+spc %>%
+  {data.frame(
+    visit = unname(.) %>% 
+      as.character() %>% 
+      grepl.replace(patterns = c("vis1","vis2","vis3"), c("visit1","visit2","visit3")), 
+    cellids = names(.))} %>% 
+  write.table("all_cells.visits", 
+              sep = ",", 
+              dec = ".", 
+              row.names = F, 
+              col.names = F)
+```
+
+## vascular objects
+
+```{r}
+con <- qread("con_vascular.qs", nthreads = 10)
+annotation <- qread("anno_vascular.qs")
+
+prepareObjectsForPython(con, 
+                        annotation,
+                        "",
+                        "vascular",
+                        "UMAP")
+```
