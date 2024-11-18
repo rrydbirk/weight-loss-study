@@ -29,16 +29,29 @@ anno.major <- qread("anno_major.qs")
 
 ## con_major
 
+The easiest way to extract the list with raw count matrices is to extract it from the Conos object that we provide for all cells. We do this first and then preprocess.
+
+```{r}
+con.major <- qread("con_major.qs", nthreads = 10)
+
+cms.preprocessed <- con.major$samples %>% 
+  lget("misc") %>% 
+  lget("rawCounts") %>% 
+  lapply(basicP2proc, make.geneknn = F, get.tsne = F, get.largevis = F, n.cores = 32)
+```
+
+Then, we can re-create the Conos object. Please note, we provide additional embeddings in the prepared object that you'll lose if you save this object. Also, the embedding may not be exactly the same.
+
+After the next step, we use the major object to create objects for subpopulations.
+
 ```{r, eval = F}
-con.major <- append(cms.preprocessed.vis1, 
-                    cms.preprocessed.vis2) %>% 
-  append(cms.preprocessed.vis3) %>% 
+con.major <- cms.preprocessed %>%  
   Conos$new(n.cores = 32)
 
 con.major$buildGraph()
 con.major$findCommunities()
 con.major$embedGraph(method = "UMAP", embedding.name = "UMAP_refined7", min.dist = 0.0001, n.neighbors = 120, spread = 5)
-con.major$embedGraph(method = "largeVis", embedding.name = "largeVis")
+con.major$embedGraph(method = "largeVis", embedding.name = "largeVis") # Not necessary to run, we used the UMAP embedding
 
 qsave("con_major.qs", nthreads = 10)
 ```
