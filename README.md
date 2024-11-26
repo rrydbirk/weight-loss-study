@@ -60,8 +60,14 @@ Most data objects are saved in .qs format. In R, please load with the [qs](https
   
   Size: 1237156917 bytes; MD5 checksum: f0927029b746c62fc3771af928094e33
   
-- [Other objects (3.4 GB)](https://osf.io/cmsyk)
+- [Cell correlations (582 MB)](https://osf.io/f68bp)
+  
+  Zip file containing files for calculating cell correlations to the WATLAS study
+  
+  Size: 609624031 bytes; MD5 checksum: bd71f5dd2cdd76be232d1665b89b1fc5
+  
+- [Other objects (3.4 GB)](https://osf.io/gqdfz)
   
   Zip file containing remaining files, e.g., meta data, annotations, files for velocity, etc.
   
-  Size: 3624325580 bytes; MD5 checksum: f83c4095f05be90b514c9115de689650
+  Size: 3624339940 bytes; MD5 checksum: be4160f6fe450dd5ad815565e574aed8
