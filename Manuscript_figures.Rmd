@@ -29,6 +29,7 @@ library(slingshot)
 library(circlize)
 library(cowplot)
 library(sccore)
+library(corrplot)
 
 meta <- qread("meta.qs")
 
@@ -492,6 +493,292 @@ p.low <- ggplot(plot.dat %>% filter(facet == "low"), aes(variable, value)) +
   stat_pvalue_manual(stat.test %>% filter(facet == "low") %>% mutate(x = x-x.cor, xmin = xmin-x.cor, xmax = xmax-x.cor), label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 1, hide.ns = FALSE) # Wilcoxon
 
 plot_grid(plotlist = list(p.high, p.low), rel_widths = c(1,4.5))
+```
+
+## Figure 3D
+
+Load data
+
+```{r, f3d}
+## Plot Individual genes from RNA-seq data
+Bulk_norm_counts <- read.delim("Bulk_norm_counts.txt", h=T)
+colData <- read.delim("Meta_Data_WL_Select.txt", h=T, dec = ",")
+```
+
+TREM2
+
+```{r, f3d2}
+gene_of_interest <- "TREM2"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Perform a paired ANOVA separately for each gender
+anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
+anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract ANOVA p-values
+anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
+anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+
+# Perform paired Wilcoxon tests for each sex
+wilcox_res <- list(
+  visit1_vs_visit2_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit2_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  )
+)
+
+wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
+  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    map_signif_level = TRUE,
+    test = "wilcox.test",
+    test.args = list(paired = TRUE)
+  ) +
+  theme(plot.title = element_text(size = 10))
+
+# Add ANOVA p-values to the plot
+plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
+plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+
+# Display the plot
+print(plot)
+```
+
+SPP1
+
+```{r, f3d3}
+gene_of_interest <- "SPP1"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Perform a paired ANOVA separately for each gender
+anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
+anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract ANOVA p-values
+anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
+anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+
+# Perform paired Wilcoxon tests for each sex
+wilcox_res <- list(
+  visit1_vs_visit2_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit2_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  )
+)
+
+wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
+  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    map_signif_level = TRUE,
+    test = "wilcox.test",
+    test.args = list(paired = TRUE)
+  ) +
+  theme(plot.title = element_text(size = 10))
+
+# Add ANOVA p-values to the plot
+plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
+plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+
+# Display the plot
+print(plot)
+```
+
+MMP9
+
+```{r}
+gene_of_interest <- "MMP9"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Perform a paired ANOVA separately for each gender
+anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
+anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract ANOVA p-values
+anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
+anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+
+# Perform paired Wilcoxon tests for each sex
+wilcox_res <- list(
+  visit1_vs_visit2_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_F = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit2_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit1_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  ),
+  visit2_vs_visit3_M = wilcox.test(
+    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
+    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
+    paired = TRUE
+  )
+)
+
+wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
+  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    map_signif_level = TRUE,
+    test = "wilcox.test",
+    test.args = list(paired = TRUE)
+  ) +
+  theme(plot.title = element_text(size = 10))
+
+# Add ANOVA p-values to the plot
+plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
+plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+
+# Display the plot
+print(plot)
 ```
 
 ## Figure 3E
@@ -2625,19 +2912,15 @@ ggplot(plot.dat, aes(bin, value)) +
 
 ## Load data
 
-We provide lists with filtered count matrices per visit. Please note, we re-sequenced some samples that are renamed in the following.
+We provide lists with filtered count matrices per visit.
 
 ```{r s1load}
-cms <- c("vis1_cms_filtered.qs",
-         "vis2_cms_filtered.qs",
-         "vis3_cms_filtered.qs") %>% 
-  lapply(qread, nthreads = 10) %>% 
-  mapply(\(x,y) setNames(x, paste0(names(x), "_", y)), x = ., y = c("visit1", "visit2", "visit3")) %>% 
-  unlist() %>% 
-  .[!names(.) %in% c("Donor_25_poolB_visit3","Donor_29_poolA_visit3")] %>% 
-  setNames(gsub("_poolA|_poolB", "", names(.)))
-
 con.major <- qread("con_major.qs", nthreads = 10)
+
+cms <- con.major$samples %>% 
+  lget("misc") %>% 
+  lget("rawCounts") %>% 
+  lapply(Matrix::t)
 
 spc <- con.major$getDatasetPerCell()
 ```
@@ -2758,6 +3041,32 @@ con.major$plotGraph(groups = varToPlot,
   scale_color_manual(values = ggsci::pal_jama()(3))
 ```
 
+## Figure S1E
+
+```{r}
+WATLAS <- read.delim("watlas_labels_l1_adipose_anno_super.tsv")
+rownames(WATLAS)=WATLAS$X
+WATLAS=WATLAS[2:21]
+
+# Define the order of columns and rows
+column_order <- c("Adipocyte", "FAP", "VEC", "LEC", "SMC","Pericyte", "B.cell", "CD4..T.cell", "CD8..T.cell", "ILC", "NK.cell", "Mast",  
+                  "Macrophage",  "Monocyte", "DC", "pDC",
+                  "Endometrium", "Mesothelial", "Plasmablast", 
+                  "Schwann" )
+
+row_order <- c("Adipocytes", "ASPC", "EC", "lEC", "SMCs", "Pericytes", "B-cells", "T-cells", "Mast cells", "Myeloid")
+WATLAS_ordered <- WATLAS[, rev(column_order)] # Reorder columns
+WATLAS_ordered <- WATLAS_ordered[row_order, ] # Reorder rows
+
+corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0, 1),
+         col = rev(COL2("RdBu",200)),
+         is.corr = F, 
+         tl.col	= "black",
+         tl.pos	= "lower",
+         outline = "#C0C0C0",
+         addgrid.col= NA)
+```
+
 # Figure S2
 
 ## Load data
@@ -2843,6 +3152,27 @@ con$plotGraph(groups = varToPlot,
   theme(line = element_blank()) +
   dotSize(3) +
   scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S2D
+
+```{r}
+WATLAS <- read.delim("watlas_labels_l2_adipose_anno.tsv")
+rownames(WATLAS)=WATLAS$X
+
+# Define Vascular cells
+column_order <- c("SOX5..VEC",  "BTNL9..VEC", "ACKR1..VEC", "LEC", "SMC", "Pericyte")
+row_order <- c("arEC", "cEC", "cEC2","vEC", "lEC", "SMCs", "Pericytes")
+WATLAS_ordered <- WATLAS[, rev(column_order)] # Reorder columns
+WATLAS_ordered <- WATLAS_ordered[row_order, ] # Reorder rows
+
+corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0, 1),
+         col = rev(COL2("RdBu",200)),
+         is.corr = F, 
+         tl.col	= "black",
+         tl.pos	= "lower",
+         outline = "#C0C0C0",
+         addgrid.col= NA)
 ```
 
 # Figure S3
@@ -3147,6 +3477,27 @@ con$plotGraph(groups = varToPlot,
   scale_color_manual(values = ggsci::pal_jama()(3))
 ```
 
+## Figure S3K
+
+```{r}
+WATLAS <- read.delim("watlas_labels_l2_adipose_anno.tsv")
+rownames(WATLAS)=WATLAS$X
+
+# Define MACS
+column_order <- c("LYVE1..Macrophage",  "CYP27A1..Macrophage", "LPL..Macrophage")
+row_order <- c("ATM", "mono/mac", "Early LAM", "LAM")
+WATLAS_ordered <- WATLAS[, rev(column_order)] # Reorder columns
+WATLAS_ordered <- WATLAS_ordered[row_order, ] # Reorder rows
+
+corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0.5, 1),
+         col = rev(COL2("RdBu",200)),
+         is.corr = F, 
+         tl.col	= "black",
+         tl.pos	= "lower",
+         outline = "#C0C0C0",
+         addgrid.col= NA)
+```
+
 ## Figure S3L
 
 Preparations
@@ -3333,6 +3684,49 @@ con$plotGraph(groups = varToPlot,
   theme(line = element_blank()) +
   dotSize(3) +
   scale_color_manual(values = ggsci::pal_jama()(3))
+```
+
+## Figure S4D
+
+```{r}
+FAP_sub <- read.delim("fap.tsv")
+rownames(FAP_sub)=FAP_sub$anno
+FAP_sub=FAP_sub[2:5]
+
+# Define ASPCs 
+column_order <- c("FAP2","FAP1", "FAP4","FAP3")
+row_order <- c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")
+FAP_ordered <- FAP_sub[, rev(column_order)] # Reorder columns
+FAP_ordered <- FAP_ordered[row_order, ] # Reorder rows
+
+corrplot(t(t(FAP_ordered)), method="color", order = , col.lim=c(-1, 1.09),
+         col = rev(COL2("RdBu",200)),
+         is.corr = F, 
+         tl.col	= "black",
+         tl.pos	= "lower",
+         outline = "#C0C0C0",
+         addgrid.col= NA)
+```
+
+## Figure S4E
+
+```{r}
+WATLAS <- read.delim("watlas_labels_l2_adipose_anno.tsv")
+rownames(WATLAS)=WATLAS$X
+
+# Define ASPCs 
+column_order <- c("DPP4..FAP",  "CXCL14..FAP", "PPARG..FAP", "ICAM1..FAP")
+row_order <- c("ASPC_DPP4", "ASPC_CXCL14", "ASPC_PPARG", "ASPC_EPHA3")
+WATLAS_ordered <- WATLAS[, rev(column_order)] # Reorder columns
+WATLAS_ordered <- WATLAS_ordered[row_order, ] # Reorder rows
+
+corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0.4, 1),
+         col = rev(COL2("RdBu",200)),
+         is.corr = F, 
+         tl.col	= "black",
+         tl.pos	= "lower",
+         outline = "#C0C0C0",
+         addgrid.col= NA)
 ```
 
 ## Figure S4F-G
