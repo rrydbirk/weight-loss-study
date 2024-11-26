@@ -1504,7 +1504,7 @@ sex.stat <- plot.dat %$%
 # Wilcoxon
 stat.test <- plot.dat %>%
   group_by(anno, sex) %>%
-  wilcox_test(value~sex_visit, paired = F) %>% 
+  wilcox_test(value~sex_visit, paired = T) %>% 
   mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
   filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
   add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
@@ -2367,7 +2367,7 @@ mat.df2 %>%
     # Wilcoxon
     stat.test <- plot.dat %>%
       group_by(bin, sex) %>%
-      wilcox_test(mm~sex_visit, paired = F)
+      wilcox_test(mm~sex_visit, paired = T)
     
     stat.test %<>% 
       filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
@@ -2886,7 +2886,7 @@ sex.stat <- plot.dat %$%
 # Wilcoxon
 stat.test <- plot.dat %>%
   group_by(bin, sex) %>%
-  wilcox_test(value~sex_visit, paired = F)
+  wilcox_test(value~sex_visit, paired = T)
 
 stat.test %<>% 
   filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
@@ -2905,7 +2905,7 @@ ggplot(plot.dat, aes(bin, value)) +
         axis.text = element_text(color = "black")) +
   scale_fill_manual(values = c(colorRampPalette(c("pink","darkred"))(3), colorRampPalette(c("lightblue","blue3"))(3))) +
   geom_text(inherit.aes = F, data = sex.stat, aes(ct, y = 1.5e3, label = sig, group = sex), position = position_dodge(width = 0.9)) + # KW
-  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 0.2, hide.ns = F) # Wilcoxon
+  stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 0.2, hide.ns = F)# Wilcoxon
 ```
 
 # Figure S1
@@ -3390,7 +3390,7 @@ ggplot(plot.dat, aes(variable, value)) +
   stat_pvalue_manual(stat.test, label = "p.adj.signif", tip.length = 0.01, bracket.nudge.y = 1, hide.ns = F) # Wilcoxon
 ```
 
-## Figure S3H-J
+## Figure S3H-J,L
 
 ### Load data
 
@@ -3501,6 +3501,8 @@ corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0.5, 1),
 ## Figure S3L
 
 Preparations
+
+Load data for S3H-J first
 
 ```{r s3l}
 cts <- c("Early LAM", "LAM", "mono/mac", "ATM")
@@ -3808,7 +3810,7 @@ sex.stat <- plot.dat %$%
 # Wilcoxon
 stat.test <- plot.dat %>%
   group_by(anno, sex) %>%
-  wilcox_test(value~sex_visit, paired = F) %>% 
+  wilcox_test(value~sex_visit, paired = T) %>% 
   mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
   filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
   add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
@@ -3868,7 +3870,7 @@ sex.stat <- plot.dat %$%
 # Wilcoxon
 stat.test <- plot.dat %>%
   group_by(anno, sex) %>%
-  wilcox_test(value~sex_visit, paired = F) %>% 
+  wilcox_test(value~sex_visit, paired = T) %>% 
   mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
   filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
   add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
@@ -3984,7 +3986,7 @@ sex.stat <- plot.dat %$%
 # Wilcoxon
 stat.test <- plot.dat %>%
   group_by(anno, sex) %>%
-  wilcox_test(value~sex_visit, paired = F) %>% 
+  wilcox_test(value~sex_visit, paired = T) %>% 
   mutate(., p.adj.signif = apply(., 1, \(x) if(x[10] > 0.05 && x[10] <= 0.1) "." else x[11])) %>% 
   filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
   add_xy_position(x = "anno", dodge = 0.8, scales = "free_y", fun = "mean_sd", step.increase = 0.05)
