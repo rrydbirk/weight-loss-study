@@ -2,6 +2,8 @@ This repository holds information for reproducing data and figures for the paper
 
 We provide objects necessary to produce all figures presented in the manuscript, except for QC which we provide as reports due to GDPR restrictions.
 
+
+
 # Documents overview
 
 - QC for [visits 1 & 2 (HTML)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/QC_visit1and2.html) or [visit 3 (HTML)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/QC_visit3.html)
@@ -22,11 +24,13 @@ We provide objects necessary to produce all figures presented in the manuscript,
 
 Most data objects are saved in .qs format. In R, please load with the [qs](https://cran.r-project.org/web/packages/qs/index.html) package.
 
+All ZIP archives must be unpacked before creating figures.
+
 - Conos objects
   
   [Major object, all nuclei and cell types (3 GB)](https://osf.io/w5rk6)
   
-  Size: 3218459076 bytes; MD5 checksum: 
+  Size: 3218459076 bytes; MD5 checksum: e4e9392424a1d801de13995e98386b5a
   
   [Adipocytes, ASPCs, macrophages (2.4 GB)](https://osf.io/6cku8)
   
@@ -62,12 +66,12 @@ Most data objects are saved in .qs format. In R, please load with the [qs](https
   
 - [Cell correlations (582 MB)](https://osf.io/f68bp)
   
-  Zip file containing files for calculating cell correlations to the WATLAS study
+  ZIP archive containing files for calculating cell correlations to the WATLAS study
   
   Size: 609624031 bytes; MD5 checksum: bd71f5dd2cdd76be232d1665b89b1fc5
   
 - [Other objects (3.4 GB)](https://osf.io/gqdfz)
   
-  Zip file containing remaining files, e.g., meta data, annotations, files for velocity, etc.
+  ZIP archive containing remaining files, e.g., meta data, annotations, files for velocity, etc.
   
   Size: 3624339940 bytes; MD5 checksum: be4160f6fe450dd5ad815565e574aed8
