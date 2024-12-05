@@ -523,57 +523,67 @@ gene_counts_long <- gene_counts %>%
 gene_counts_long <- gene_counts_long %>%
   left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
 
-# Perform a paired ANOVA separately for each gender
-anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
-anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
 
-# Extract ANOVA p-values
-anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
-anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
 
-# Perform paired Wilcoxon tests for each sex
-wilcox_res <- list(
-  visit1_vs_visit2_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit2_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
   )
-)
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
 
-wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
 
 # Create the boxplot with significance annotations
 plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
   geom_boxplot(outlier.shape = NA) +  # Remove outliers
   geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
-  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
-  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
   theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
   geom_signif(
     comparisons = list(
       c("visit_1.F", "visit_2.F"), 
@@ -583,15 +593,26 @@ plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fil
       c("visit_1.M", "visit_3.M"), 
       c("visit_2.M", "visit_3.M")
     ),
-    map_signif_level = TRUE,
-    test = "wilcox.test",
-    test.args = list(paired = TRUE)
-  ) +
-  theme(plot.title = element_text(size = 10))
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
 
-# Add ANOVA p-values to the plot
-plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
-plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
 
 # Display the plot
 print(plot)
@@ -615,57 +636,67 @@ gene_counts_long <- gene_counts %>%
 gene_counts_long <- gene_counts_long %>%
   left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
 
-# Perform a paired ANOVA separately for each gender
-anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
-anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
 
-# Extract ANOVA p-values
-anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
-anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
 
-# Perform paired Wilcoxon tests for each sex
-wilcox_res <- list(
-  visit1_vs_visit2_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit2_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
   )
-)
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
 
-wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
 
 # Create the boxplot with significance annotations
 plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
   geom_boxplot(outlier.shape = NA) +  # Remove outliers
   geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
-  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
-  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
   theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
   geom_signif(
     comparisons = list(
       c("visit_1.F", "visit_2.F"), 
@@ -675,15 +706,26 @@ plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fil
       c("visit_1.M", "visit_3.M"), 
       c("visit_2.M", "visit_3.M")
     ),
-    map_signif_level = TRUE,
-    test = "wilcox.test",
-    test.args = list(paired = TRUE)
-  ) +
-  theme(plot.title = element_text(size = 10))
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
 
-# Add ANOVA p-values to the plot
-plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
-plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
 
 # Display the plot
 print(plot)
@@ -707,57 +749,67 @@ gene_counts_long <- gene_counts %>%
 gene_counts_long <- gene_counts_long %>%
   left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
 
-# Perform a paired ANOVA separately for each gender
-anova_res_F <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "F"))
-anova_res_M <- aov(count ~ visit + Error(patient/visit), data = gene_counts_long %>% filter(sex == "M"))
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
 
-# Extract ANOVA p-values
-anova_pval_F <- summary(anova_res_F)[[2]][[1]][["Pr(>F)"]][1]
-anova_pval_M <- summary(anova_res_M)[[2]][[1]][["Pr(>F)"]][1]
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
 
-# Perform paired Wilcoxon tests for each sex
-wilcox_res <- list(
-  visit1_vs_visit2_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_F = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "F") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "F") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit2_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit1_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_1", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
-  ),
-  visit2_vs_visit3_M = wilcox.test(
-    x = gene_counts_long %>% filter(visit == "visit_2", sex == "M") %>% pull(count),
-    y = gene_counts_long %>% filter(visit == "visit_3", sex == "M") %>% pull(count),
-    paired = TRUE
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
   )
-)
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
 
-wilcox_pvals <- sapply(wilcox_res, function(x) x$p.value)
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
 
 # Create the boxplot with significance annotations
 plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
   geom_boxplot(outlier.shape = NA) +  # Remove outliers
   geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
-  #geom_line(aes(group = Patient), color = "grey", size = 0.3, linetype = "solid", alpha = 0.6) +  # Connect paired values with thin lines
-  labs(title = gene_of_interest, x = "Visit and Sex", y = "Gene Count") +
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
   theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
   geom_signif(
     comparisons = list(
       c("visit_1.F", "visit_2.F"), 
@@ -767,15 +819,26 @@ plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fil
       c("visit_1.M", "visit_3.M"), 
       c("visit_2.M", "visit_3.M")
     ),
-    map_signif_level = TRUE,
-    test = "wilcox.test",
-    test.args = list(paired = TRUE)
-  ) +
-  theme(plot.title = element_text(size = 10))
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
 
-# Add ANOVA p-values to the plot
-plot <- plot + annotate("text", x = 1, y = max(gene_counts_long$count), label = paste("ANOVA F p-value:", format(anova_pval_F, digits = 3)), hjust = 0, vjust = 1, size = 3)
-plot <- plot + annotate("text", x = 4, y = max(gene_counts_long$count), label = paste("ANOVA M p-value:", format(anova_pval_M, digits = 3)), hjust = 0, vjust = 1, size = 3)
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
 
 # Display the plot
 print(plot)
@@ -2367,7 +2430,7 @@ mat.df2 %>%
     # Wilcoxon
     stat.test <- plot.dat %>%
       group_by(bin, sex) %>%
-      wilcox_test(mm~sex_visit, paired = T)
+      wilcox_test(mm~sex_visit, paired = F)
     
     stat.test %<>% 
       filter(p.adj.signif != "ns", !is.na(p)) %>% # Remove those not significant for KW
@@ -2390,7 +2453,7 @@ mat.df2 %>%
     
     pp
   }) %>% 
-  cowplot::plot_grid(plotlist = ., ncol = 3)
+  cowplot::plot_grid(plotlist = ., ncol = 3) -> p
 ```
 
 ## Figure 6E
@@ -2912,8 +2975,6 @@ ggplot(plot.dat, aes(bin, value)) +
 
 ## Load data
 
-We provide lists with filtered count matrices per visit.
-
 ```{r s1load}
 con.major <- qread("con_major.qs", nthreads = 10)
 
@@ -2931,12 +2992,11 @@ spc <- con.major$getDatasetPerCell()
 cms %>% 
   lapply(\(x) diff(x@p)) %>% 
   sapply(median) %>% 
-  {data.frame(sample = names(.), 
+  {data.frame(sample = names(.),
               value = unname(.))} %>% 
   mutate(visit = strsplit(sample, "_") %>% 
            sget(3)) %>% 
-  mutate(sample = paste0("Donor", seq(14), "_", visit) %>% 
-           factor(., levels = unique(.))) %>% 
+  mutate(sample = factor(sample, levels = sample)) %>%
   ggplot(aes(sample, value, fill = visit)) +
   geom_col() +
   theme_bw() +
@@ -2954,8 +3014,7 @@ cms %>%
               value = unname(.))} %>% 
   mutate(visit = strsplit(sample, "_") %>% 
            sget(3)) %>% 
-  mutate(sample = paste0("Donor", seq(14), "_", visit) %>% 
-           factor(., levels = unique(.))) %>% 
+  mutate(sample = factor(sample, levels = sample)) %>%
   ggplot(aes(sample, value, fill = visit)) +
   geom_col() +
   theme_bw() +
@@ -3177,6 +3236,350 @@ corrplot(t(WATLAS_ordered), method="color", order = , col.lim=c(0, 1),
 
 # Figure S3
 
+## Figure S3A
+
+Load data
+
+```{r, fs3a}
+## Plot Individual genes from RNA-seq data
+Bulk_norm_counts <- read.delim("Bulk_norm_counts.txt", h=T)
+colData <- read.delim("Meta_Data_WL_Select.txt", h=T, dec = ",")
+```
+
+```{r}
+gene_of_interest <- "TNF"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
+
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
+  )
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
+
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
+
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
+
+# Display the plot
+print(plot)
+```
+
+```{r}
+gene_of_interest <- "CCL3"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
+
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
+  )
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
+
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
+
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
+
+# Display the plot
+print(plot)
+```
+
+```{r}
+gene_of_interest <- "CCL5"
+
+# Subset norm_counts to get counts for the gene of interest
+gene_counts <- Bulk_norm_counts[Bulk_norm_counts$hgnc_symbol == gene_of_interest, ]
+rownames(gene_counts)=gene_counts$hgnc_symbol
+gene_counts=gene_counts[4:96]
+
+# Reshape gene_counts into long format and merge with colData
+gene_counts_long <- gene_counts %>%
+  tibble::rownames_to_column(var = "gene") %>%  # Create a 'gene' column from row names
+  tidyr::pivot_longer(cols = -gene, names_to = "recordid", values_to = "count")
+
+gene_counts_long <- gene_counts_long %>%
+  left_join(colData, by = "recordid")  # Assuming recordid matches between gene_counts and colData
+
+# Define a helper function to map p-values to stars
+pval_to_stars <- function(p) {
+  if (p < 0.0001) {
+    return("****")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("ns")  # Not significant
+  }
+}
+
+# Perform a Kruskal-Wallis test separately for each gender
+kw_res_F <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "F"))
+kw_res_M <- kruskal.test(count ~ visit, data = gene_counts_long %>% filter(sex == "M"))
+
+# Extract Kruskal-Wallis p-values
+kw_pval_F <- kw_res_F$p.value
+kw_pval_M <- kw_res_M$p.value
+
+# Perform paired Wilcoxon tests for each gender with Holm's correction
+paired_wilcox <- function(data, sex_group) {
+  data_sex <- data %>% filter(sex == sex_group)
+  pairwise_tests <- list(
+    visit1_vs_visit2 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit1_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_1") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value,
+    visit2_vs_visit3 = wilcox.test(
+      x = data_sex %>% filter(visit == "visit_2") %>% pull(count),
+      y = data_sex %>% filter(visit == "visit_3") %>% pull(count),
+      paired = TRUE
+    )$p.value
+  )
+  corrected_pvals <- p.adjust(unlist(pairwise_tests), method = "holm")
+  return(corrected_pvals)
+}
+
+wilcox_pvals_F <- paired_wilcox(gene_counts_long, "F")
+wilcox_pvals_M <- paired_wilcox(gene_counts_long, "M")
+
+# Map the Wilcoxon p-values to stars
+wilcox_stars_F <- sapply(wilcox_pvals_F, pval_to_stars)
+wilcox_stars_M <- sapply(wilcox_pvals_M, pval_to_stars)
+
+# Create the boxplot with significance annotations
+plot <- ggplot(gene_counts_long, aes(x = interaction(visit, sex), y = count, fill = visit)) +
+  geom_boxplot(outlier.shape = NA) +  # Remove outliers
+  geom_jitter(color = "grey", size = 1, width = 0.2, alpha = 0.5) +  # Add individual points
+  labs(title = "Gene Expression Across Visits and Genders", x = "Visit and Sex", y = "Gene Count") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 10)) +
+  geom_signif(
+    comparisons = list(
+      c("visit_1.F", "visit_2.F"), 
+      c("visit_1.F", "visit_3.F"), 
+      c("visit_2.F", "visit_3.F"),
+      c("visit_1.M", "visit_2.M"), 
+      c("visit_1.M", "visit_3.M"), 
+      c("visit_2.M", "visit_3.M")
+    ),
+    annotations = c(
+      wilcox_stars_F["visit1_vs_visit2"],
+      wilcox_stars_F["visit1_vs_visit3"],
+      wilcox_stars_F["visit2_vs_visit3"],
+      wilcox_stars_M["visit1_vs_visit2"],
+      wilcox_stars_M["visit1_vs_visit3"],
+      wilcox_stars_M["visit2_vs_visit3"]
+    ),
+    textsize = 4,
+    map_signif_level = FALSE
+  )
+
+# Add Kruskal-Wallis p-values as text
+plot <- plot + 
+  annotate("text", x = 1, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Female p-value:", format(kw_pval_F, digits = 3)), 
+           hjust = 0, size = 3) +
+  annotate("text", x = 4, y = max(gene_counts_long$count) * 1.1, 
+           label = paste("KW Male p-value:", format(kw_pval_M, digits = 3)), 
+           hjust = 0, size = 3)
+
+# Display the plot
+print(plot)
+```
+
+
 ## Figure S3B-G
 
 ### Load data
@@ -3209,13 +3612,13 @@ con$plotGraph(groups = anno.lymphoid,
 
 ### Figure S3C
 
-```{r s3c}
+```{r s3c, fig.width=7, fig.height=4}
+pdf("/work/02_data/00_prints/S3A.pdf", width = 7, height = 4)
 varToPlot <- spc %>% 
   as.character() %>% 
   strsplit("_vis") %>% 
   sget(1) %>% 
-  setNames(names(spc)) %>% 
-  factor(labels = paste0("Donor", seq(14))) %>% 
+  setNames(names(spc)) %>%
   .[names(.) %in% names(anno.lymphoid)]
 
 con$plotGraph(groups = varToPlot, 
@@ -3230,6 +3633,7 @@ con$plotGraph(groups = varToPlot,
   labs(x = "largeVis1", y = "largeVis2", col = "") + 
   theme(line = element_blank()) +
   dotSize(3)
+dev.off()
 ```
 
 ### Figure S3D
