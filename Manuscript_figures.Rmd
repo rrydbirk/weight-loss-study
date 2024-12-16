@@ -1173,7 +1173,7 @@ plot.dat %>%
 plot.dat %>% 
   mutate(sex_visit_anno = paste(sex_visit, anno, sep = "_")) %$% 
   split(diff, sex_visit_anno) %>% 
-  lapply(t.test)
+  lapply(t.test, alternative = "less")
 ```
 
 # Figure 4
@@ -2453,7 +2453,7 @@ mat.df2 %>%
     
     pp
   }) %>% 
-  cowplot::plot_grid(plotlist = ., ncol = 3) -> p
+  cowplot::plot_grid(plotlist = ., ncol = 3)
 ```
 
 ## Figure 6E
