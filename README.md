@@ -1,7 +1,6 @@
-This repository holds information for reproducing data and figures for the paper **Cellular and Transcriptional Dynamics of the Human Adipose Tissue during different Weight Loss Modalities** by Loft _et al._.
+This repository holds information for reproducing data and figures for the paper **[Single cell-resolved transcriptional dynamics of human subcutaneous adipose tissue during lifestyle- and bariatric surgery-induced weight loss](https://www.biorxiv.org/content/10.1101/2025.01.30.634294v1)** by Loft *et al*.
 
 We provide objects necessary to produce all figures presented in the manuscript, except for QC which we provide as reports due to GDPR restrictions.
-
 
 
 # Documents overview
@@ -11,6 +10,8 @@ We provide objects necessary to produce all figures presented in the manuscript,
 - [Objects preparations in R including exports to Python (R Markdown)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Objects_preparations.Rmd)
   
 - [Objects preparations in Python (Jupyter Notebook)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Objects_preparations.ipynb)
+
+- [Archetype identification (R Markdown)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Adipocyte_archetypes.Rmd)
   
 - Manuscript figures in R, [HTML](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/Manuscript_figures.html) / [R Markdown](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Manuscript_figures.Rmd)
 

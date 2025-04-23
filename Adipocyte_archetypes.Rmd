@@ -1,0 +1,88 @@
+---
+title: "Adipocyte archetypes"
+author: "Rasmus Rydbirk"
+date: "'Sys.Date()'"
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+# Setup
+
+```{r setup, message=FALSE}
+library(archetypes)
+library(magrittr)
+library(dplyr)
+library(qs)
+library(scHelper) # github.com/rrydbirk/scHelper
+```
+
+# Identify archetypes
+
+This is the code we used to identify archetypes. We set k = 3 based on cluster stability using *findCommunities* in **Conos** with parameter *test.stability = TRUE*. Please note, the results may not be exactly reproducible.
+
+```{r}
+con <- qread("con_adipocytes.qs", nthreads = 10)
+emb <- con$embeddings$largeVis
+
+res <- lapply(seq(10), \(x) {
+  message(paste0("Iteration ",x))
+  # Calculate archetypes
+  tmp <- archetypes(data = emb, 3, verbose = F)
+  
+  # Right
+  x <- 0.25
+  a <- tmp$alphas %>% 
+    as.data.frame() %>% 
+    `rownames<-`(tmp$residuals %>% rownames()) %>% 
+    filter(V1 < x, V2 > (1-x)) %>% 
+    rownames()
+  
+  # Left
+  x <- 0.30
+  b <- tmp$alphas %>% 
+    as.data.frame() %>% 
+    `rownames<-`(tmp$residuals %>% rownames()) %>% 
+    filter(V1 > (1-x), V2 < x) %>% 
+    rownames()
+  
+  # Top
+  x <- 0.25
+  c <- tmp$alphas %>% 
+    as.data.frame() %>% 
+    `rownames<-`(tmp$residuals %>% rownames()) %>% 
+    filter(V1 < x, V2 < x) %>% 
+    rownames()
+  
+  out <- list(a,b,c)
+  
+  nn <- out %>% 
+    sapply(\(x) unname(anno[x])) %>% 
+    lapply(table) %>% 
+    lapply(sort, T) %>% 
+    lapply(names) %>% 
+    sget(1)
+  
+  if (any(table(nn) > 1)) out <- NA else names(out) <- nn
+  
+  return(out)
+}) %>% 
+  .[!lapply(res, is.na) %>% sapply(any)]
+
+anno.arc <- c("Adipocytes_RPSS23","Adipocytes_DGAT2","Adipocytes_CLSTN2") %>% 
+  `names<-`(lapply(., \(x) sget(res, x) %>% 
+                     Reduce(c, .) %>% 
+                     table() %>% 
+                     sort(T) %>% 
+                     .[seq(2e3)] %>% 
+                     names()), .) %>% 
+  {lapply(seq(3), \(x) `names<-`(rep(names(.)[x], 2e3), .[[x]]))} %>% 
+  Reduce(c, .) %>% 
+  factor()
+
+anno.arc %<>% factor(labels = c("CLSTN2_archetype", "DGAT2_archetype", "PRSS23_archetype"))
+
+qsave(anno.arc, "anno_adipocytes_archetypes.qs")
+```
+
