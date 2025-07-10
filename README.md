@@ -15,8 +15,6 @@ We provide objects necessary to produce all figures presented in the manuscript,
   
 - Manuscript figures in R, [HTML](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/Manuscript_figures.html) / [R Markdown](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Manuscript_figures.Rmd)
 
-- [Velocity figures (Jupyter Notebok)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Velocity.ipynb)
-
 - [Scenic figures (Jupyter Notebook)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Scenic.ipynb)
 
 - [Liana figures (Jupyter Notebook)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Liana.ipynb)
@@ -71,8 +69,8 @@ All ZIP archives must be unpacked before creating figures.
   
   Size: 609624031 bytes; MD5 checksum: bd71f5dd2cdd76be232d1665b89b1fc5
   
-- [Other objects (3.4 GB)](https://osf.io/gqdfz)
+- [Other objects (1.7 GB)](https://osf.io/gqdfz)
   
   ZIP archive containing remaining files, e.g., meta data, annotations, files for velocity, etc.
   
-  Size: 3624339940 bytes; MD5 checksum: be4160f6fe450dd5ad815565e574aed8
+  Size: 1777113687 bytes; MD5 checksum: 8a4e4329c42dc426944fe9802c90432c

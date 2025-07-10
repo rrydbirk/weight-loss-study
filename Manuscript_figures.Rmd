@@ -2332,9 +2332,10 @@ con$plotGraph(groups = anno.adipocytes.ext,
 ```{r f5b}
 cm.merged <- con$getJointCountMatrix()
 
-c("PLXDC2","CBLB","TCF4",
-  "GPAM","ACSL1","LPL","DGAT2",
-  "PRSS23","THSD7A","AL139317.5") %>% 
+# c("PLXDC2","CBLB","TCF4",
+#   "GPAM","ACSL1","LPL","DGAT2",
+#   "PRSS23","THSD7A","AL139317.5") %>% 
+c("PRSS23","PDE5A","ADIPOQ", "DGAT2", "GPAM", "LPL", "RORA", "CLSTN2", "CRIM1", "ITGA1") %>% 
   sccore::dotPlot(., 
                   cm.merged, 
                   anno.adipocytes, 
@@ -3145,7 +3146,7 @@ res <- mt %>%
 
 ### Plot
 
-Load data. We need the `sds_obj` from Figure 6A. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
+Load data. We need the `sds_obj` from Figure 6a. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
 
 ```{r f6e3}
 res <- qread("pseudotime_res_novis2.qs", nthreads = 10) %>% 
@@ -4110,11 +4111,9 @@ pc.res$x %>%
 ## Extended Data Figure 2e
 
 ```{r, fig.width = 6, fig.height = 4}
-tmp <- con.integration$clusters$loft_transfer$groups %>%
-  renameAnnotation("Endothelial cells", "ECs") %>%
-  renameAnnotation("FAPs", "ASPCs") %>% 
+tmp <- loft.transfer$labels %>%
   renameAnnotation("Lymphoid immune cells", "Lymphoid ICs") %>%
-  renameAnnotation(c("Tissue-resident macrophages", "Myeloid immune cells"), "Myeloid ICs") %>% 
+  renameAnnotation(c("Myeloid immune cells"), "Myeloid ICs") %>% 
   {data.frame(cid = names(.), anno = unname(.))} %>% 
   filter(!grepl("!!", cid)) %>% 
   mutate(sample = con.integration$clusters$hinte_condition$groups[match(cid, names(con.integration$clusters$hinte_condition$groups))])
@@ -4135,8 +4134,8 @@ df.plot <- tmp.prop %>%
   {Map(\(nn, x) data.frame(sample = nn, anno = names(x), value = unname(x)), nn = names(.), x = .)} %>% 
   bind_rows() %>% 
   mutate(anno = factor(anno) %>% 
-           factor(levels = levels(.)[c(1, 2, 5, 8, 3, 7, 6, 4)]) %>% 
-           renameAnnotation("Lymphatic endothelial cells", "LECs"))
+           factor(levels = levels(.)[c(1, 2, 5, 8, 3, 7, 6, 4, 9)]) %>% 
+           renameAnnotation("Lymphatic ECs", "LECs"))
 
 df.plot %>% 
   rbind(c("st_t0", "LECs", 0)) %>% # Adding an artificial 0 as LECs aren't detected in all conditions
@@ -4437,6 +4436,8 @@ long_data_VEC %>%
 ```
 
 ## Extended Data Figure 3g
+
+We integrated our data with the data from [Hinte *et al.*](https://www.nature.com/articles/s41586-024-08165-7) that were graciously provided by the authors. As these data are not public, here we will only show how we plotted the data.
 
 ```{r, fig.width=6, fig.height=4}
 tmp <- con.integration$clusters$loft_transfer_minor$groups %>%
@@ -5800,7 +5801,7 @@ colnames(cm.bulk) %<>%
 
 See Figure 3d for model setup
 
-```{r}
+```{r, fig.width=4, fig.height=4}
 # Use Cacoa to calculate proportions
 cao <- Cacoa$new(data.object = con.major, 
                  cell.groups = anno.major, 
@@ -5855,7 +5856,7 @@ lasso_model <- glmnet(cm.test, proportions, alpha = 1, lambda = best_lambda)
 lasso.predict.all <- predict(lasso_model, newx = cm.test, s = best_lambda)
 r2.all <- cor(proportions, lasso.predict.all)^2
 
-data.frame(Proportions = proportions,
+p <- data.frame(Proportions = proportions,
            Predictions = unname(lasso.predict.all)) %>% 
   ggplot(aes(Proportions, Predictions)) + 
   geom_point() +
@@ -5863,6 +5864,8 @@ data.frame(Proportions = proportions,
   theme(axis.text = element_text(colour = "black")) +
   labs(title = paste0("r2 = ", formatC(r2.all, digits = 3)), y = "Predicted proportions (%)", x = "Proportions (%)") +
   geom_abline(intercept = 0, slope = 1, colour = "firebrick")
+
+p
 ```
 
 ### Extended Data Figure 5h
@@ -5971,6 +5974,8 @@ long_data_mac %>%
 ```
 
 ## Extended Data Figure 5j
+
+We integrated our data with the data from [Hinte *et al.*](https://www.nature.com/articles/s41586-024-08165-7) that were graciously provided by the authors. As these data are not public, here we will only show how we plotted the data.
 
 ```{r, fig.width=6, fig.height=4}
 tmp <- con.integration$clusters$loft_transfer_minor$groups %>%
@@ -6232,6 +6237,8 @@ ht = draw(ha)
 ```
 
 ## Extended Data Figure 5m
+
+We integrated our data with the data from [Hinte *et al.*](https://www.nature.com/articles/s41586-024-08165-7) that were graciously provided by the authors. As these data are not public, here we will only show how we plotted the data.
 
 ```{r}
 cts <- c("Early LAM", "LAM", "mono/mac", "ATM")
@@ -7317,7 +7324,7 @@ dotPlot(c("FOS", "JUN", "JUND", "JUNB"), cm, cg.visit, gene.order = rev(c("FOS",
 
 ```{r s5}
 con <- qread("con_adipocytes.qs", nthreads = 10)
-
+anno.adipocytes <- qread("anno_adipocytes_archetypes.qs")
 spc <- con$getDatasetPerCell()
 ```
 
@@ -7442,7 +7449,7 @@ plot_grid(plotlist = list(
 Please note, the clustering algorithm holds some randomness, stabilities will not always be the same.
 
 ```{r s5f}
-con$findCommunities(resolution = 1, test.stability = T, name = "l05stab")
+con$findCommunities(resolution = 1, test.stability = T, name = "l1stab")
 
 plot_grid(plotlist = list(
   con$plotClusterStability("l05stab", "ari") +
@@ -7451,7 +7458,7 @@ plot_grid(plotlist = list(
           axis.text.x = element_blank()) + 
     geom_boxplot(aes(col = "#E41A1C"), notch = T) +
     labs(x = " \n "),
-  con$plotClusterStability("l05stab", "hjc") + 
+  con$plotClusterStability("l1stab", "hjc") + 
     theme_bw() +
     theme(line = element_blank()) + 
     scale_color_manual(values = RColorBrewer::brewer.pal(8, "Reds")[-1])
@@ -7460,15 +7467,13 @@ plot_grid(plotlist = list(
 
 ## Extended Data Figure 8g
 
-```{r s5g}
+```{r s5g, fig.width=6, fig.height=4}
 cm.merged <- con$getJointCountMatrix()
 
-anno.adipocytes <- qread("anno_adipocytes_archetypes.qs")
-
-c("PRSS23","PDE5A","ADIPOQ","DGAT2", "GPAM", "LPL", "DCN", "VIM", "RORA", "CLSTN2", "CRIM1", "ITGA1") %>% 
+c("PRSS23","PDE5A","ADIPOQ", "DGAT2", "GPAM", "LPL", "RORA", "CLSTN2", "CRIM1", "ITGA1") %>% 
   sccore::dotPlot(., 
                   cm.merged, 
-                  anno.adipocytes, 
+                  getConosCluster(con, "leiden0.5"), 
                   gene.order = ., 
                   cols = c("white","red3"))
 ```
@@ -7696,7 +7701,7 @@ plot.dat %>%
 
 ## Extended Data Figure 8j
 
-First, we integrate adipocytes from both studies. This is not run here
+First, we integrate adipocytes from both studies. This is not run here, and the data are not shared.
 
 ```{r, fig.width=12, fig.height=4, warning=F, eval = F}
 con.adipocytes <- qread("con_adipocytes.qs", nthreads = 10)
@@ -7845,6 +7850,8 @@ ht = draw(ha)
 ```
 
 ## Extended Data Figure 8k
+
+We integrated our data with the data from [Hinte *et al.*](https://www.nature.com/articles/s41586-024-08165-7) that were graciously provided by the authors. As these data are not public, here we will only show how we plotted the data.
 
 ```{r}
 genes.order <- read.delim("Archetypes_DEG_heatmap_genes.tsv") %$% 
@@ -8098,7 +8105,7 @@ res <- mt %>%
 
 ### Extended Data Figures 9a,b
 
-Load data. For ease, we also provide pseudotime W/O visit 2 nuclei. We need the `sds_obj` from Figure 6A. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
+Load data. For ease, we also provide pseudotime W/O visit 2 nuclei. We need the `sds_obj` from Figure 6a. Also, for ease of use we provide slingshot pseudotime W/O visit 2 as `pseudotime_novis2.qs`.
 
 ```{r s6ab}
 res <- qread("pseudotime_res_novis2.qs", nthreads = 10) %>% 
@@ -8242,7 +8249,7 @@ Heatmap(Smooth,
 
 ## Extended Data Figure 9d
 
-We need the `sds_obj` object from Figure 6A.
+We need the `sds_obj` object from Figure 6a.
 
 ```{r s6d, fig.height = 16, fig.width = 16}
 con <- qread("con_adipocytes_aspc.qs", nthreads = 10)

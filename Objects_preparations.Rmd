@@ -262,16 +262,3 @@ spc %>%
               row.names = F, 
               col.names = F)
 ```
-
-## vascular objects
-
-```{r}
-con <- qread("con_vascular.qs", nthreads = 10)
-annotation <- qread("anno_vascular.qs")
-
-prepareObjectsForPython(con, 
-                        annotation,
-                        "",
-                        "vascular",
-                        "UMAP")
-```
