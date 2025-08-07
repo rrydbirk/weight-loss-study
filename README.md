@@ -5,7 +5,7 @@ We provide objects necessary to produce all figures presented in the manuscript,
 
 # Documents overview
 
-- QC for [visits 1 & 2 (HTML)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/QC_visit1and2.html) or [visit 3 (HTML)](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/QC_visit3.html)
+- QC for [visits 1 & 2 (HTML)](https://rrydbirk.github.io/weight-loss-study/QC_visit1and2.html) or [visit 3 (HTML)](https://rrydbirk.github.io/weight-loss-study/QC_visit3.html)
   
 - [Objects preparations in R including exports to Python (R Markdown)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Objects_preparations.Rmd)
   
@@ -13,7 +13,7 @@ We provide objects necessary to produce all figures presented in the manuscript,
 
 - [Archetype identification (R Markdown)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Adipocyte_archetypes.Rmd)
   
-- Manuscript figures in R, [HTML](https://htmlpreview.github.io/?https://raw.githubusercontent.com/rrydbirk/weight-loss-study/main/Manuscript_figures.html) / [R Markdown](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Manuscript_figures.Rmd)
+- Manuscript figures in R, [HTML](https://rrydbirk.github.io/weight-loss-study/Manuscript_figures.html) / [R Markdown](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Manuscript_figures.Rmd)
 
 - [Scenic figures (Jupyter Notebook)](https://www.github.com/rrydbirk/weight-loss-study/blob/main/Scenic.ipynb)
 
